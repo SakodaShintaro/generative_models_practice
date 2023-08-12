@@ -4,6 +4,9 @@ set -eux
 TARGET_DIR=$(readlink -f $1)
 
 cd $(dirname $0)/../
+
+./script/apply_clang_format.sh
+
 cmake -S . -B build
 cmake --build build
 
