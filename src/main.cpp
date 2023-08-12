@@ -1,5 +1,7 @@
 #include "glob.hpp"
 
+#include <opencv2/opencv.hpp>
+
 #include <iostream>
 
 int main(int argc, char ** argv)
@@ -14,6 +16,7 @@ int main(int argc, char ** argv)
   const std::string input_dir = argv[1];
   const std::vector<std::string> files = utils::glob(input_dir);
   for (const std::string & file : files) {
-    std::cout << file << std::endl;
+    cv::Mat image = cv::imread(file);
+    std::cout << file << " " << image.size() << std::endl;
   }
 }
