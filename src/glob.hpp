@@ -23,6 +23,6 @@ std::vector<std::string> glob(const std::string & input_dir)
   return files;
 }
 
-} // namespace utils
+}  // namespace utils
 
 #endif
