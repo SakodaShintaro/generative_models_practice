@@ -2,17 +2,18 @@
 
 VAEImpl::VAEImpl(int64_t z_dim)
 {
-  enc1_ = register_module("enc1_", torch::nn::Linear(28 * 28, 200));
+  enc1_ = register_module("enc1_", torch::nn::Linear(32 * 32 * 3, 200));
   enc2_ = register_module("enc2_", torch::nn::Linear(200, 200));
   enc_mean_ = register_module("enc_mean_", torch::nn::Linear(200, z_dim));
   enc_var_ = register_module("enc_var_", torch::nn::Linear(200, z_dim));
   dec1_ = register_module("dec1_", torch::nn::Linear(z_dim, 200));
   dec2_ = register_module("dec2_", torch::nn::Linear(200, 200));
-  dec3_ = register_module("dec3_", torch::nn::Linear(200, 28 * 28));
+  dec3_ = register_module("dec3_", torch::nn::Linear(200, 32 * 32 * 3));
 }
 
 std::pair<torch::Tensor, torch::Tensor> VAEImpl::encode(torch::Tensor x)
 {
+  x = x.flatten(1);
   x = enc1_(x);
   x = torch::relu(x);
   x = enc2_(x);
@@ -36,6 +37,7 @@ torch::Tensor VAEImpl::decode(torch::Tensor x)
   x = torch::relu(x);
   x = dec3_(x);
   x = torch::sigmoid(x);
+  x = x.view({x.size(0), 3, 32, 32});
   return x;
 }
 

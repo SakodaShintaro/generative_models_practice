@@ -17,14 +17,18 @@ const std::string kModelName = "vae_model.pt";
 void train(const std::string & input_dir)
 {
   const std::vector<std::string> files = utils::glob(input_dir);
-  std::vector<torch::Tensor> mnist_data;
+  std::vector<torch::Tensor> data_vector;
   for (const std::string & file : files) {
     cv::Mat image = cv::imread(file, cv::IMREAD_GRAYSCALE);
+    cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    cv::resize(image, image, cv::Size(32, 32), 0, 0, cv::INTER_LINEAR);
     torch::Tensor tensor =
-      torch::from_blob(image.data, {image.rows * image.cols * image.channels()}, torch::kByte);
+      torch::from_blob(image.data, {image.rows, image.cols, image.channels()}, torch::kByte);
     tensor = tensor.to(torch::kFloat32);
     tensor /= 255;
-    mnist_data.push_back(tensor);
+    tensor = tensor.permute({2, 0, 1});
+    tensor = tensor.contiguous();
+    data_vector.push_back(tensor);
   }
 
   VAE vae(kHiddenDim);
@@ -46,16 +50,16 @@ void train(const std::string & input_dir)
   constexpr int64_t kEpochs = 20;
   constexpr int64_t kBatchSize = 256;
   std::mt19937 engine(std::random_device{}());
-  const int64_t data_num = mnist_data.size();
+  const int64_t data_num = data_vector.size();
   torch::Device device(torch::kCUDA);
   vae->to(device);
 
   for (int64_t epoch = 1; epoch <= kEpochs; epoch++) {
-    std::shuffle(mnist_data.begin(), mnist_data.end(), engine);
+    std::shuffle(data_vector.begin(), data_vector.end(), engine);
     for (int64_t i = 0; i < data_num; i += kBatchSize) {
       const int64_t step = i / kBatchSize + 1;
       std::vector<torch::Tensor> batch(
-        mnist_data.begin() + i, mnist_data.begin() + std::min(i + kBatchSize, data_num));
+        data_vector.begin() + i, data_vector.begin() + std::min(i + kBatchSize, data_num));
 
       torch::Tensor x = torch::stack(batch, 0).to(device);
       auto [mean, var] = vae->encode(x);
@@ -63,7 +67,7 @@ void train(const std::string & input_dir)
       torch::Tensor y = vae->decode(z);
       torch::Tensor kl_loss = -0.5 * (1 + torch::log(var) - mean.pow(2) - var).sum(1).mean(0);
       torch::Tensor recon_loss =
-        torch::binary_cross_entropy(y, x, {}, torch::Reduction::None).sum(1).mean(0);
+        torch::binary_cross_entropy(y, x, {}, torch::Reduction::None).mean(1).sum({1, 2}).mean(0);
       torch::Tensor loss = kl_loss + recon_loss;
 
       optimizer.zero_grad();

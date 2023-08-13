@@ -7,19 +7,19 @@
 
 void save_image(const torch::Tensor & tensor, const std::string & filename)
 {
-  torch::Tensor tensor_cpu = tensor.to(torch::kCPU);
+  torch::Tensor tensor_cpu = tensor.clone().cpu();
   tensor_cpu *= 255;
   tensor_cpu = tensor_cpu.to(torch::kU8);
-  tensor_cpu = tensor_cpu.view({28, 28});
+  tensor_cpu = tensor_cpu.view({3, 32, 32});
+  tensor_cpu = tensor_cpu.permute({1, 2, 0});
+  tensor_cpu = tensor_cpu.contiguous();
 
   const int64_t height = tensor_cpu.size(0);
   const int64_t width = tensor_cpu.size(1);
 
-  // OpenCVのcv::Matへの変換
-  cv::Mat image(height, width, CV_8UC1);
+  cv::Mat image(height, width, CV_8UC3);
   std::memcpy(image.data, tensor_cpu.data_ptr(), sizeof(torch::kU8) * tensor_cpu.numel());
 
-  // 画像として保存
   cv::imwrite(filename, image);
 }
 
