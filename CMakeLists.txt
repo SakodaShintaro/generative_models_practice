@@ -18,4 +18,5 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 link_libraries(${OpenCV_LIBS})
 
 add_executable(vae_cpp src/main.cpp
+                       src/vae.cpp
 )
