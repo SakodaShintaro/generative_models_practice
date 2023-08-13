@@ -10,4 +10,4 @@ cd $(dirname $0)/../
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-./build/vae_cpp $TARGET_DIR
+./build/vae_cpp train $TARGET_DIR

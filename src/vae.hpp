@@ -3,7 +3,7 @@
 
 #include <torch/torch.h>
 
-class VAEImpl : torch::nn::Module
+class VAEImpl : public torch::nn::Module
 {
 public:
   VAEImpl(int64_t z_dim);

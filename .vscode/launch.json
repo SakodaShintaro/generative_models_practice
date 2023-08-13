@@ -4,12 +4,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gbd) Launch",
+            "name": "train",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build-Debug/a.out",
+            "program": "${workspaceFolder}/build-Debug/vae_cpp",
             "args": [
-                ""
+                "train",
+                "path"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/build-Debug",

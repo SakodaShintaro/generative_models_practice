@@ -19,4 +19,5 @@ link_libraries(${OpenCV_LIBS})
 
 add_executable(vae_cpp src/main.cpp
                        src/vae.cpp
+                       src/main_functions.cpp
 )
