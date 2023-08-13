@@ -2,14 +2,17 @@
 
 #include "glob.hpp"
 #include "save_image.hpp"
+#include "timer.hpp"
 #include "vae.hpp"
 
 #include <opencv2/opencv.hpp>
 
+#include <filesystem>
 #include <random>
 
 constexpr int64_t kHiddenDim = 10;
-const std::string save_path = "./vae_model.pt";
+const std::string kSaveDir = "./result/";
+const std::string kModelName = "vae_model.pt";
 
 void train(const std::string & input_dir)
 {
@@ -26,6 +29,18 @@ void train(const std::string & input_dir)
 
   VAE vae(kHiddenDim);
 
+  std::filesystem::path save_dir(kSaveDir);
+  std::filesystem::remove_all(save_dir);
+  std::filesystem::create_directory(save_dir);
+
+  std::ofstream ofs(kSaveDir + "loss.tsv");
+  ofs << "time\tepoch\tstep\trecon_loss\tkl_loss" << std::endl;
+  ofs << std::fixed;
+  std::cout << std::fixed;
+
+  Timer timer;
+  timer.start();
+
   torch::optim::Adam optimizer(vae->parameters(), torch::optim::AdamOptions(1e-3));
 
   constexpr int64_t kEpochs = 20;
@@ -35,11 +50,10 @@ void train(const std::string & input_dir)
   torch::Device device(torch::kCUDA);
   vae->to(device);
 
-  std::cout << std::fixed;
-
   for (int64_t epoch = 1; epoch <= kEpochs; epoch++) {
     std::shuffle(mnist_data.begin(), mnist_data.end(), engine);
     for (int64_t i = 0; i < data_num; i += kBatchSize) {
+      const int64_t step = i / kBatchSize + 1;
       std::vector<torch::Tensor> batch(
         mnist_data.begin() + i, mnist_data.begin() + std::min(i + kBatchSize, data_num));
 
@@ -55,18 +69,21 @@ void train(const std::string & input_dir)
       optimizer.zero_grad();
       loss.backward();
       optimizer.step();
-      std::cout << "Epoch: " << epoch << ", kl_loss: " << kl_loss.item<float>()
-                << ", recon_loss: " << recon_loss.item<float>() << std::endl;
+      std::stringstream ss;
+      ss << timer.elapsed_time() << "\t" << epoch << "\t" << step << "\t"
+         << recon_loss.item<float>() << "\t" << kl_loss.item<float>() << std::endl;
+      std::cout << ss.str();
+      ofs << ss.str();
     }
   }
 
-  torch::save(vae, save_path);
+  torch::save(vae, kSaveDir + kModelName);
 }
 
 void generate(const std::string & output_dir)
 {
   VAE vae(kHiddenDim);
-  torch::load(vae, save_path);
+  torch::load(vae, kSaveDir + kModelName);
   constexpr int64_t kNumSamples = 16;
   torch::Tensor z = torch::randn({kNumSamples, kHiddenDim}).to(torch::kCUDA);
   torch::Tensor y = vae->decode(z);
