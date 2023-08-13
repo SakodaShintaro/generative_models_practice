@@ -4,6 +4,6 @@
 #include <string>
 
 void train(const std::string & input_dir);
-void generate();
+void generate(const std::string & output_dir);
 
 #endif

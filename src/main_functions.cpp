@@ -1,11 +1,15 @@
 #include "main_functions.hpp"
 
 #include "glob.hpp"
+#include "save_image.hpp"
 #include "vae.hpp"
 
 #include <opencv2/opencv.hpp>
 
 #include <random>
+
+constexpr int64_t kHiddenDim = 10;
+const std::string save_path = "./vae_model.pt";
 
 void train(const std::string & input_dir)
 {
@@ -20,7 +24,7 @@ void train(const std::string & input_dir)
     mnist_data.push_back(tensor);
   }
 
-  VAE vae(10);
+  VAE vae(kHiddenDim);
 
   torch::optim::Adam optimizer(vae->parameters(), torch::optim::AdamOptions(1e-3));
 
@@ -55,8 +59,20 @@ void train(const std::string & input_dir)
                 << ", recon_loss: " << recon_loss.item<float>() << std::endl;
     }
   }
+
+  torch::save(vae, save_path);
 }
 
-void generate()
+void generate(const std::string & output_dir)
 {
+  VAE vae(kHiddenDim);
+  torch::load(vae, save_path);
+  constexpr int64_t kNumSamples = 16;
+  torch::Tensor z = torch::randn({kNumSamples, kHiddenDim}).to(torch::kCUDA);
+  torch::Tensor y = vae->decode(z);
+  for (int64_t i = 0; i < kNumSamples; i++) {
+    std::stringstream ss;
+    ss << output_dir << "/" << std::setfill('0') << std::setw(2) << i << ".png";
+    save_image(y[i], ss.str());
+  }
 }

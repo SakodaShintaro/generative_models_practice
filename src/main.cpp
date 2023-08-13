@@ -18,7 +18,12 @@ int main(int argc, char ** argv)
     const std::string input_dir = argv[2];
     train(input_dir);
   } else if (mode == "generate") {
-    generate();
+    if (argc != 3) {
+      std::cout << "Usage: vae_cpp train <output_dir>" << std::endl;
+      return 1;
+    }
+    const std::string output_dir = argv[2];
+    generate(output_dir);
   } else {
     std::cerr << "Unknown mode: " << mode << std::endl;
     std::exit(1);
