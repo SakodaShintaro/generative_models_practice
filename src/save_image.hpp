@@ -5,12 +5,14 @@
 
 #include <torch/torch.h>
 
+// Assumed
+// * tensor: (C, H, W)
+// * values: in [0, 1]
 void save_image(const torch::Tensor & tensor, const std::string & filename)
 {
   torch::Tensor tensor_cpu = tensor.clone().cpu();
   tensor_cpu *= 255;
   tensor_cpu = tensor_cpu.to(torch::kU8);
-  tensor_cpu = tensor_cpu.view({3, 32, 32});
   tensor_cpu = tensor_cpu.permute({1, 2, 0});
   tensor_cpu = tensor_cpu.contiguous();
 

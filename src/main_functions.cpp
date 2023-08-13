@@ -10,7 +10,7 @@
 #include <filesystem>
 #include <random>
 
-constexpr int64_t kHiddenDim = 10;
+constexpr int64_t kHiddenDim = 30;
 const std::string kSaveDir = "./result/";
 const std::string kModelName = "vae_model.pt";
 
@@ -19,9 +19,8 @@ void train(const std::string & input_dir)
   const std::vector<std::string> files = utils::glob(input_dir);
   std::vector<torch::Tensor> data_vector;
   for (const std::string & file : files) {
-    cv::Mat image = cv::imread(file, cv::IMREAD_GRAYSCALE);
-    cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
-    cv::resize(image, image, cv::Size(32, 32), 0, 0, cv::INTER_LINEAR);
+    cv::Mat image = cv::imread(file);
+    cv::resize(image, image, cv::Size(64, 64), 0, 0, cv::INTER_LINEAR);
     torch::Tensor tensor =
       torch::from_blob(image.data, {image.rows, image.cols, image.channels()}, torch::kByte);
     tensor = tensor.to(torch::kFloat32);
@@ -36,6 +35,7 @@ void train(const std::string & input_dir)
   std::filesystem::path save_dir(kSaveDir);
   std::filesystem::remove_all(save_dir);
   std::filesystem::create_directory(save_dir);
+  std::filesystem::create_directory(save_dir / "images");
 
   std::ofstream ofs(kSaveDir + "loss.tsv");
   ofs << "time\tepoch\tstep\trecon_loss\tkl_loss" << std::endl;
@@ -47,8 +47,8 @@ void train(const std::string & input_dir)
 
   torch::optim::Adam optimizer(vae->parameters(), torch::optim::AdamOptions(1e-3));
 
-  constexpr int64_t kEpochs = 20;
-  constexpr int64_t kBatchSize = 256;
+  constexpr int64_t kEpochs = 2000;
+  constexpr int64_t kBatchSize = 512;
   std::mt19937 engine(std::random_device{}());
   const int64_t data_num = data_vector.size();
   torch::Device device(torch::kCUDA);
@@ -78,6 +78,13 @@ void train(const std::string & input_dir)
          << recon_loss.item<float>() << "\t" << kl_loss.item<float>() << std::endl;
       std::cout << ss.str();
       ofs << ss.str();
+
+      if (epoch % 100 == 0 && step == 1) {
+        const std::string epoch_str =
+          (std::stringstream() << std::setfill('0') << std::setw(4) << epoch).str();
+        save_image(x[0], kSaveDir + "/images/input_" + epoch_str + ".png");
+        save_image(y[0], kSaveDir + "/images/predict_" + epoch_str + ".png");
+      }
     }
   }
 

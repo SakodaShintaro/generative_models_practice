@@ -4,8 +4,8 @@ VAEImpl::VAEImpl(int64_t z_dim)
 {
   using namespace torch::nn;
 
-  const int64_t init_h = 32;
-  const int64_t init_w = 32;
+  const int64_t init_h = 64;
+  const int64_t init_w = 64;
 
   const int64_t base_ch = 16;
   std::vector<int64_t> ch_list = {
