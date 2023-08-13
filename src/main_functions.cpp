@@ -12,8 +12,9 @@ void train(const std::string & input_dir)
   const std::vector<std::string> files = utils::glob(input_dir);
   std::vector<torch::Tensor> mnist_data;
   for (const std::string & file : files) {
-    cv::Mat image = cv::imread(file);
-    torch::Tensor tensor = torch::from_blob(image.data, {image.rows * image.cols}, torch::kByte);
+    cv::Mat image = cv::imread(file, cv::IMREAD_GRAYSCALE);
+    torch::Tensor tensor =
+      torch::from_blob(image.data, {image.rows * image.cols * image.channels()}, torch::kByte);
     tensor = tensor.to(torch::kFloat32);
     tensor /= 255;
     mnist_data.push_back(tensor);
