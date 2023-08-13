@@ -25,7 +25,7 @@ void train(const std::string & input_dir)
   torch::optim::Adam optimizer(vae->parameters(), torch::optim::AdamOptions(1e-3));
 
   constexpr int64_t kEpochs = 20;
-  constexpr int64_t kBatchSize = 128;
+  constexpr int64_t kBatchSize = 256;
   std::mt19937 engine(std::random_device{}());
   const int64_t data_num = mnist_data.size();
   torch::Device device(torch::kCUDA);
@@ -43,8 +43,9 @@ void train(const std::string & input_dir)
       auto [mean, var] = vae->encode(x);
       torch::Tensor z = vae->sample(mean, var);
       torch::Tensor y = vae->decode(z);
-      torch::Tensor kl_loss = -0.5 * torch::sum(1 + torch::log(var) - mean.pow(2) - var);
-      torch::Tensor recon_loss = torch::binary_cross_entropy(y, x, {}, torch::Reduction::Mean);
+      torch::Tensor kl_loss = -0.5 * (1 + torch::log(var) - mean.pow(2) - var).sum(1).mean(0);
+      torch::Tensor recon_loss =
+        torch::binary_cross_entropy(y, x, {}, torch::Reduction::None).sum(1).mean(0);
       torch::Tensor loss = kl_loss + recon_loss;
 
       optimizer.zero_grad();
