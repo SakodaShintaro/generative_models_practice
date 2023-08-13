@@ -13,13 +13,14 @@ public:
   torch::Tensor forward(torch::Tensor x);
 
 private:
-  torch::nn::Linear enc1_ = nullptr;
-  torch::nn::Linear enc2_ = nullptr;
+  torch::nn::ModuleList enc_conv_list_ = nullptr;
   torch::nn::Linear enc_mean_ = nullptr;
   torch::nn::Linear enc_var_ = nullptr;
-  torch::nn::Linear dec1_ = nullptr;
-  torch::nn::Linear dec2_ = nullptr;
-  torch::nn::Linear dec3_ = nullptr;
+  torch::nn::Linear dec_linear_ = nullptr;
+  torch::nn::ModuleList dec_conv_list_ = nullptr;
+
+  int64_t mid_h_;
+  int64_t mid_w_;
 };
 TORCH_MODULE(VAE);
 
