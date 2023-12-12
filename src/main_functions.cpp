@@ -20,7 +20,6 @@ void train(const std::string & input_dir)
   std::vector<torch::Tensor> data_vector;
   for (const std::string & file : files) {
     cv::Mat image = cv::imread(file);
-    cv::resize(image, image, cv::Size(64, 64), 0, 0, cv::INTER_LINEAR);
     torch::Tensor tensor =
       torch::from_blob(image.data, {image.rows, image.cols, image.channels()}, torch::kByte);
     tensor = tensor.to(torch::kFloat32);
@@ -66,15 +65,14 @@ void train(const std::string & input_dir)
       torch::Tensor z = vae->sample(mean, var);
       torch::Tensor y = vae->decode(z);
       torch::Tensor kl_loss = -0.5 * (1 + torch::log(var) - mean.pow(2) - var).sum(1).mean(0);
-      torch::Tensor recon_loss =
-        torch::binary_cross_entropy(y, x, {}, torch::Reduction::None).mean(1).sum({1, 2}).mean(0);
+      torch::Tensor recon_loss = torch::binary_cross_entropy(y, x, {}, torch::Reduction::Mean);
       torch::Tensor loss = kl_loss + recon_loss;
 
       optimizer.zero_grad();
       loss.backward();
       optimizer.step();
       std::stringstream ss;
-      ss << timer.elapsed_time() << "\t" << epoch << "\t" << step << "\t"
+      ss << std::fixed << timer.elapsed_time() << "\t" << epoch << "\t" << step << "\t"
          << recon_loss.item<float>() << "\t" << kl_loss.item<float>() << std::endl;
       std::cout << ss.str();
       ofs << ss.str();
