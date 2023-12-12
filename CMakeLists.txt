@@ -7,7 +7,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 # LibTorch
 set(CAFFE2_USE_CUDNN 1)
-list(APPEND CMAKE_PREFIX_PATH ../libtorch-2.0.1)
+list(APPEND CMAKE_PREFIX_PATH ../libtorch-2.1.1)
 find_package(Torch REQUIRED)
 include_directories(${TORCH_INCLUDE_DIRS})
 link_libraries(${TORCH_LIBRARIES})
