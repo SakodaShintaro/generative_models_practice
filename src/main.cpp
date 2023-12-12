@@ -19,7 +19,7 @@ int main(int argc, char ** argv)
     train(input_dir);
   } else if (mode == "generate") {
     if (argc != 3) {
-      std::cout << "Usage: vae_cpp train <output_dir>" << std::endl;
+      std::cout << "Usage: vae_cpp generate <output_dir>" << std::endl;
       return 1;
     }
     const std::string output_dir = argv[2];
