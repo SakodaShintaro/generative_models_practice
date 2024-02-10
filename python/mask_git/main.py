@@ -54,7 +54,7 @@ if __name__ == "__main__":
     rng = random.PRNGKey(0)
     params = model.init(rng, jnp.ones((1, 96, 96, 3)))
 
-    num_epochs = 100
+    num_epochs = 1000
     step_num_per_epoch = train_loader.step_num_per_epoch()
     num_steps = step_num_per_epoch * num_epochs
     print(f"{num_steps=}")
@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     optimizer = optax.chain(
         optax.clip(1.0),
-        optax.adamw(learning_rate=schedule, eps=1.5e-4, weight_decay=0.0001),
+        optax.adamw(learning_rate=schedule, eps=1.5e-4, weight_decay=0.001),
     )
 
     state = train_state.TrainState.create(
