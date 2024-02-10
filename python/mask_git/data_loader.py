@@ -34,3 +34,8 @@ class DataLoader:
 
     def shuffle(self):
         np.random.shuffle(self._image_path_list)
+
+    def step_num_per_epoch(self) -> int:
+        n = len(self._image_path_list)
+        bs = self.batch_size
+        return (n + bs - 1) // bs
