@@ -54,16 +54,29 @@ if __name__ == "__main__":
     rng = random.PRNGKey(0)
     params = model.init(rng, jnp.ones((1, 96, 96, 3)))
 
-    optimizer = optax.adamw(
-        learning_rate=1e-3, eps=1.5e-4, weight_decay=0.0001)
+    num_epochs = 100
+    step_num_per_epoch = train_loader.step_num_per_epoch()
+    num_steps = step_num_per_epoch * num_epochs
+    print(f"{num_steps=}")
+
+    schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=1e-3,
+        warmup_steps=int(num_steps * 0.01),
+        decay_steps=num_steps,
+        end_value=0.0,
+    )
+
+    optimizer = optax.chain(
+        optax.clip(1.0),
+        optax.adamw(learning_rate=schedule, eps=1.5e-4, weight_decay=0.0001),
+    )
 
     state = train_state.TrainState.create(
         apply_fn=model.apply,
         params=params,
         tx=optimizer,
     )
-
-    num_epochs = 100
 
     now = datetime.now()
     datetime_str = now.strftime("%Y%m%d-%H%M%S")
