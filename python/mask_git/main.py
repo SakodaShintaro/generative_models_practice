@@ -61,7 +61,7 @@ if __name__ == "__main__":
         tx=optimizer,
     )
 
-    num_epochs = 40
+    num_epochs = 100
 
     now = datetime.now()
     datetime_str = now.strftime("%Y%m%d-%H%M%S")
