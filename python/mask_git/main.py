@@ -53,7 +53,8 @@ if __name__ == "__main__":
     rng = random.PRNGKey(0)
     params = model.init(rng, jnp.ones((1, 96, 96, 3)))
 
-    optimizer = optax.adam(learning_rate=1e-3)
+    optimizer = optax.adamw(
+        learning_rate=1e-3, eps=1.5e-4, weight_decay=0.0001)
 
     state = train_state.TrainState.create(
         apply_fn=model.apply,
