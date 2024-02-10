@@ -47,7 +47,8 @@ if __name__ == "__main__":
 
     batch_size = 128
     train_loader = DataLoader(train_data_dir, batch_size)
-    test_loader = DataLoader(test_data_dir, batch_size, max_num=10)
+    test_loader = DataLoader(test_data_dir, batch_size, max_num=5)
+    train_loader_for_test = DataLoader(train_data_dir, batch_size, max_num=5)
 
     model = VQVAE(train=True)
     rng = random.PRNGKey(0)
@@ -67,7 +68,7 @@ if __name__ == "__main__":
     now = datetime.now()
     datetime_str = now.strftime("%Y%m%d-%H%M%S")
     save_dir = f"./result_test_{datetime_str}/"
-    writer = SummaryWriter("./logdir")
+    writer = SummaryWriter(save_dir)
     global_step = 0
 
     for epoch in range(num_epochs):
@@ -84,18 +85,17 @@ if __name__ == "__main__":
 
         curr_save_dir = f"{save_dir}/{epoch:04d}"
         os.makedirs(curr_save_dir, exist_ok=True)
-        count = 0
-        for batch in test_loader:
-            reconstructions = test_step(state, batch)
-            for i, (original, reconstructed) in enumerate(zip(batch, reconstructions)):
-                save_path = f"{curr_save_dir}/reconstruction_{count:08d}.png"
-                combined_image = np.hstack((original, reconstructed))
-                combined_image_bgr = cv2.cvtColor(
-                    combined_image, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(save_path, combined_image_bgr * 255)
-                combined_image = combined_image.transpose(2, 0, 1)
-                combined_image = combined_image * 255
-                combined_image = combined_image.astype(np.uint8)
-                writer.add_image(
-                    f'test/reconstruction_{i:04d}', combined_image, global_step=epoch)
-                count += 1
+        for name, loader in zip(["train", "test"], [train_loader_for_test, test_loader]):
+            for batch in loader:
+                reconstructions = test_step(state, batch)
+                for i, (original, reconstructed) in enumerate(zip(batch, reconstructions)):
+                    save_path = f"{curr_save_dir}/reconstruction_{name}_{i:04d}.png"
+                    combined_image = np.hstack((original, reconstructed))
+                    combined_image_bgr = cv2.cvtColor(
+                        combined_image, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(save_path, combined_image_bgr * 255)
+                    combined_image = combined_image.transpose(2, 0, 1)
+                    combined_image = combined_image * 255
+                    combined_image = combined_image.astype(np.uint8)
+                    writer.add_image(
+                        f'test/reconstruction_{name}_{i:04d}', combined_image, global_step=epoch)
