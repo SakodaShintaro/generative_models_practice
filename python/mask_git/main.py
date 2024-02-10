@@ -9,7 +9,8 @@ from flax.training import train_state
 from data_loader import DataLoader
 import os
 import numpy as np
-from tqdm import tqdm
+from datetime import datetime
+from tensorboardX import SummaryWriter
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -62,27 +63,38 @@ if __name__ == "__main__":
 
     num_epochs = 40
 
-    save_dir = "./result_test/"
+    now = datetime.now()
+    datetime_str = now.strftime("%Y%m%d-%H%M%S")
+    save_dir = f"./result_test_{datetime_str}/"
+    writer = SummaryWriter("./logdir")
+    global_step = 0
 
     for epoch in range(num_epochs):
         train_loader.shuffle()
         loss_sum = 0
         loss_num = 0
-        for batch in tqdm(train_loader):
+        for batch in train_loader:
             state, loss = train_step(state, batch)
             loss_sum += batch.shape[0] * loss
             loss_num += batch.shape[0]
-        print(f'Epoch {epoch}, Loss: {loss_sum / loss_num:.3f}')
+            global_step += 1
+            writer.add_scalar("train/loss", loss, global_step)
+        print(f'Epoch {epoch}, Loss: {loss_sum / loss_num:.4f}')
 
         curr_save_dir = f"{save_dir}/{epoch:04d}"
         os.makedirs(curr_save_dir, exist_ok=True)
         count = 0
         for batch in test_loader:
             reconstructions = test_step(state, batch)
-            for (original, reconstructed) in zip(batch, reconstructions):
+            for i, (original, reconstructed) in enumerate(zip(batch, reconstructions)):
                 save_path = f"{curr_save_dir}/reconstruction_{count:08d}.png"
                 combined_image = np.hstack((original, reconstructed))
                 combined_image_bgr = cv2.cvtColor(
                     combined_image, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(save_path, combined_image_bgr * 255)
+                combined_image = combined_image.transpose(2, 0, 1)
+                combined_image = combined_image * 255
+                combined_image = combined_image.astype(np.uint8)
+                writer.add_image(
+                    f'test/reconstruction_{i:04d}', combined_image, global_step=epoch)
                 count += 1
