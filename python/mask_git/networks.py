@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 import losses
 import layers
+from quantizers import FSQ
 
 
 class ResBlock(nn.Module):
@@ -70,7 +71,7 @@ class Encoder(nn.Module):
         self.filters = 128
         self.num_res_blocks = 2
         self.channel_multipliers = [1, 1, 2, 2, 4]
-        self.embedding_dim = 256
+        self.embedding_dim = 10
         self.conv_downsample = False
         self.norm_type = "GN"
         self.activation_fn = nn.swish
@@ -276,8 +277,11 @@ class VQVAE(nn.Module):
         """VQVAE setup."""
         # self.quantizer = GumbelVQ(
         #     train=self.train, dtype=self.dtype)
-        self.quantizer = VectorQuantizer(
-            train=self.train, dtype=self.dtype)
+        # self.quantizer = VectorQuantizer(
+        #     train=self.train, dtype=self.dtype)
+        self.quantizer = FSQ(
+            levels=[3 for _ in range(10)]
+        )
 
         output_dim = 3
         self.encoder = Encoder(train=self.train, dtype=self.dtype)
