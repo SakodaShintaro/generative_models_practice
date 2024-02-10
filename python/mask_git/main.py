@@ -60,7 +60,7 @@ if __name__ == "__main__":
         tx=optimizer,
     )
 
-    num_epochs = 20
+    num_epochs = 40
 
     save_dir = "./result_test/"
 
