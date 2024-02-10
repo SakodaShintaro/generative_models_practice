@@ -48,8 +48,9 @@ if __name__ == "__main__":
     train_data_dir = f"{args.data_dir}/train"
     test_data_dir = f"{args.data_dir}/test"
 
-    train_loader = DataLoader(train_data_dir, 64)
-    test_loader = DataLoader(test_data_dir, 64)
+    batch_size = 128
+    train_loader = DataLoader(train_data_dir, batch_size)
+    test_loader = DataLoader(test_data_dir, batch_size, max_num=10)
 
     model = VQVAE(train=True)
     rng = random.PRNGKey(0)
@@ -68,6 +69,7 @@ if __name__ == "__main__":
     save_dir = "./result_test/"
 
     for epoch in range(num_epochs):
+        train_loader.shuffle()
         for batch in train_loader:
             state, loss = train_step(state, batch)
             print(loss)

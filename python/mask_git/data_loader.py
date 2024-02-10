@@ -5,9 +5,11 @@ import jax.numpy as jnp
 
 
 class DataLoader:
-    def __init__(self, data_dir: str, batch_size: int) -> None:
+    def __init__(self, data_dir: str, batch_size: int, max_num: int | None = None) -> None:
         self._image_path_list = glob(f"{data_dir}/*.png")
         self.batch_size = batch_size
+        if max_num is not None:
+            self._image_path_list = self._image_path_list[:max_num]
 
     def _load_image(self, path: str) -> np.ndarray:
         img = cv2.imread(path)
@@ -17,7 +19,6 @@ class DataLoader:
 
     def __iter__(self):
         self._index = 0
-        np.random.shuffle(self._image_path_list)
         return self
 
     def __next__(self):
@@ -30,3 +31,6 @@ class DataLoader:
 
         self._index += self.batch_size
         return jnp.array(batch_images)
+
+    def shuffle(self):
+        np.random.shuffle(self._image_path_list)
