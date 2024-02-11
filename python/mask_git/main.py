@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, jit
 import optax
-from flax.training import train_state
+from flax.training import train_state, checkpoints
 from data_loader import DataLoader
 import os
 import numpy as np
@@ -81,7 +81,8 @@ if __name__ == "__main__":
 
     now = datetime.now()
     datetime_str = now.strftime("%Y%m%d-%H%M%S")
-    save_dir = f"./result_test_{datetime_str}/"
+    save_dir = os.path.abspath(f"./result_test_{datetime_str}/")
+    print(f"{save_dir=}")
     writer = SummaryWriter(save_dir)
     global_step = 0
 
@@ -113,3 +114,5 @@ if __name__ == "__main__":
                     combined_image = combined_image.astype(np.uint8)
                     writer.add_image(
                         f'test/reconstruction_{name}_{i:04d}', combined_image, global_step=epoch)
+
+    checkpoints.save_checkpoint(ckpt_dir=save_dir, target=state, step=global_step)
