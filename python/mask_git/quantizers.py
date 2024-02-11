@@ -72,7 +72,7 @@ class FSQ:
         return jnp.tanh(z + shift) * half_l - offset
 
     def quantize(self, z: jax.Array) -> Codeword:
-        """Quanitzes z, returns quantized zhat, same shape as z."""
+        """Quantizes z, returns quantized zhat, same shape as z."""
         quantized = round_ste(self.bound(z))
 
         # Renormalize to [-1, 1].
