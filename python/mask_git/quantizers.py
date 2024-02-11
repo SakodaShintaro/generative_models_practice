@@ -101,3 +101,76 @@ class FSQ:
             np.floor_divide(indices, self._basis), self._levels_np
         )
         return self._scale_and_shift_inverse(codes_non_centered)
+
+
+class FSQ_Level2:
+    def __init__(self, dim: int, eps: float = 1e-3):
+        self._eps = eps
+        self._dim = dim
+        self._basis = np.array([2 ** i for i in range(dim)]).astype(np.uint32)
+        self._implicit_codebook = self.indexes_to_codes(
+            np.arange(self.codebook_size))
+
+    def __call__(self, x) -> Codeword:
+        return self.quantize(x), dict()
+
+    @property
+    def num_dimensions(self) -> int:
+        """Number of dimensions expected from inputs."""
+        return self._dim
+
+    @property
+    def codebook_size(self) -> int:
+        """Size of the codebook."""
+        return 2 ** self._dim
+
+    @property
+    def codebook(self):
+        """Returns the implicit codebook. Shape (2^self._dim, num_dimensions)."""
+        return self._implicit_codebook
+
+    def quantize(self, z: jax.Array) -> Codeword:
+        """Quantizes z, returns quantized zhat, same shape as z."""
+        z = jnp.tanh(z)        # Map to [-1, 1]
+        z = z * 0.5 + 0.5      # Map to [0, 1]
+        z = round_ste(z)       # Quantize
+        quantized = z * 2 - 1  # Map back to [-1, 1]
+        return quantized
+
+    def codes_to_indexes(self, zhat: Codeword) -> Indices:
+        """Converts a `code` to an index in the codebook."""
+        assert zhat.shape[-1] == self.num_dimensions
+        zhat = zhat * 0.5 + 0.5  # Map to [0, 1]
+        return (zhat * self._basis).sum(axis=-1).astype(jnp.uint32)
+
+    def indexes_to_codes(self, indices: Indices) -> Codeword:
+        """Inverse of `indexes_to_codes`."""
+        indices = indices[..., jnp.newaxis]
+        val = np.floor_divide(indices, self._basis)
+        zhat_non_centered = np.mod(val, np.array([2] * self._dim))
+        zhat = zhat_non_centered * 2 - 1
+        return zhat
+
+
+if __name__ == "__main__":
+    x = jnp.array([0, 0.5, -1, 2, -3, 4])
+    print(x)
+
+    print("\nlevel2")
+    level2 = FSQ(levels=[2])
+    print(level2(x))
+
+    print("\nlevel3")
+    level3 = FSQ(levels=[3])
+    print(level3(x))
+
+    print("\nlevel2 my implementation")
+    level2 = FSQ_Level2(dim=1)
+    print(level2(x))
+
+    print("\nlevel2_3 my implementation")
+    level2_3 = FSQ_Level2(dim=3)
+    for index in range(2 ** 3):
+        code = level2_3.indexes_to_codes(jnp.array([index]))
+        index_rev = level2_3.codes_to_indexes(jnp.array([code]))
+        print(f"{index=} {code=} {index_rev=}")
