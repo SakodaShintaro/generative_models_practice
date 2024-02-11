@@ -222,51 +222,6 @@ class VectorQuantizer(nn.Module):
         return jnp.take(codebook, ids, axis=0)
 
 
-class GumbelVQ(nn.Module):
-    """Gumbel VQ."""
-    train: bool
-    dtype: int = jnp.float32
-
-    @nn.compact
-    def __call__(self, x, *, tau=1.0):
-        codebook_size = 1024
-        codebook = self.param(
-            "codebook",
-            jax.nn.initializers.variance_scaling(
-                scale=1.0, mode="fan_in", distribution="uniform"),
-            (codebook_size, x.shape[-1]))
-        codebook = jnp.asarray(codebook, dtype=self.dtype)
-        distances = jnp.reshape(
-            losses.squared_euclidean_distance(
-                jnp.reshape(x, (-1, x.shape[-1])), codebook),
-            x.shape[:-1] + (codebook_size,))
-        result_dict = dict()
-        encoding_indices = jnp.argmin(distances, axis=-1)
-        if self.train:
-            noise = jax.random.gumbel(
-                self.make_rng("rng"), distances.shape, dtype=self.dtype)
-            encodings = jax.nn.softmax((-distances + noise) / tau, axis=-1)
-            quantized = self.quantize(encodings)
-        else:
-            encodings = jax.nn.one_hot(
-                encoding_indices, codebook_size, dtype=self.dtype)
-            quantized = self.quantize(encodings)
-        result_dict.update({
-            "quantizer_loss": 0.0,
-            "encodings": encodings,
-            "encoding_indices": encoding_indices,
-        })
-        return quantized, result_dict
-
-    def quantize(self, z: jnp.ndarray) -> jnp.ndarray:
-        codebook = jnp.asarray(
-            self.variables["params"]["codebook"], dtype=self.dtype)
-        return jnp.dot(z, codebook)
-
-    def decode_ids(self, ids: jnp.ndarray) -> jnp.ndarray:
-        return jnp.take(self.variables["params"]["codebook"], ids, axis=0)
-
-
 class VQVAE(nn.Module):
     """VQVAE model."""
     train: bool
@@ -275,8 +230,6 @@ class VQVAE(nn.Module):
 
     def setup(self):
         """VQVAE setup."""
-        # self.quantizer = GumbelVQ(
-        #     train=self.train, dtype=self.dtype)
         # self.quantizer = VectorQuantizer(
         #     train=self.train, dtype=self.dtype)
         self.quantizer = FSQ(

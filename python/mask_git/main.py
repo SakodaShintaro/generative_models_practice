@@ -18,6 +18,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("data_dir", type=str)
+    parser.add_argument("--epoch", type=int, default=1000)
     return parser.parse_args()
 
 
@@ -54,7 +55,7 @@ if __name__ == "__main__":
     rng = random.PRNGKey(0)
     params = model.init(rng, jnp.ones((1, 96, 96, 3)))
 
-    num_epochs = 1000
+    num_epochs = args.epoch
     step_num_per_epoch = train_loader.step_num_per_epoch()
     num_steps = step_num_per_epoch * num_epochs
     print(f"{num_steps=}")
