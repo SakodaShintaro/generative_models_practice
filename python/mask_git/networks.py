@@ -148,6 +148,7 @@ class Decoder(nn.Module):
         x = norm_fn()(x)
         x = self.activation_fn(x)
         x = conv_fn(self.output_dim, kernel_size=(3, 3))(x)
+        x = jax.nn.sigmoid(x)
         return x
 
 
