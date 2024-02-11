@@ -131,11 +131,10 @@ class FSQ_Level2:
 
     def quantize(self, z: jax.Array) -> Codeword:
         """Quantizes z, returns quantized zhat, same shape as z."""
-        z = jnp.tanh(z)        # Map to [-1, 1]
-        z = z * 0.5 + 0.5      # Map to [0, 1]
+        z = jax.nn.sigmoid(z)  # Map to [0, 1]
         z = round_ste(z)       # Quantize
-        quantized = z * 2 - 1  # Map back to [-1, 1]
-        return quantized
+        z = z * 2 - 1          # Map back to [-1, 1]
+        return z
 
     def codes_to_indexes(self, zhat: Codeword) -> Indices:
         """Converts a `code` to an index in the codebook."""
