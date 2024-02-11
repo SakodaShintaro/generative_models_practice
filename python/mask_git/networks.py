@@ -26,7 +26,7 @@ import jax
 import jax.numpy as jnp
 import losses
 import layers
-from quantizers import FSQ
+from quantizers import FSQ, FSQ_Level2
 
 
 class ResBlock(nn.Module):
@@ -75,7 +75,6 @@ class Encoder(nn.Module):
         self.conv_downsample = False
         self.norm_type = "GN"
         self.activation_fn = nn.swish
-        # self.activation_fn = nn.relu
 
     @nn.compact
     def __call__(self, x):
@@ -121,7 +120,6 @@ class Decoder(nn.Module):
         self.channel_multipliers = [1, 1, 2, 2, 4]
         self.norm_type = "GN"
         self.activation_fn = nn.swish
-        # self.activation_fn = nn.relu
 
     @nn.compact
     def __call__(self, x):
@@ -232,9 +230,10 @@ class VQVAE(nn.Module):
         """VQVAE setup."""
         # self.quantizer = VectorQuantizer(
         #     train=self.train, dtype=self.dtype)
-        self.quantizer = FSQ(
-            levels=[3 for _ in range(10)]
-        )
+        # self.quantizer = FSQ(
+        #     levels=[3 for _ in range(10)]
+        # )
+        self.quantizer = FSQ_Level2(dim=10)
 
         output_dim = 3
         self.encoder = Encoder(train=self.train, dtype=self.dtype)
@@ -245,7 +244,6 @@ class VQVAE(nn.Module):
 
     def encode(self, image):
         encoded_feature = self.encoder(image)
-        # quantized, result_dict = self.quantizer(encoded_feature)
         quantized, result_dict = self.quantizer(encoded_feature)
         return quantized, result_dict
 
