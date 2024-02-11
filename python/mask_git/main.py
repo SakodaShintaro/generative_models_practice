@@ -46,7 +46,7 @@ if __name__ == "__main__":
     train_data_dir = f"{args.data_dir}/train"
     test_data_dir = f"{args.data_dir}/test"
 
-    batch_size = 128
+    batch_size = 100
     train_loader = DataLoader(train_data_dir, batch_size)
     test_loader = DataLoader(test_data_dir, batch_size, max_num=5)
     train_loader_for_test = DataLoader(train_data_dir, batch_size, max_num=5)
