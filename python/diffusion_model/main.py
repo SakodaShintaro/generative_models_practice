@@ -3,9 +3,9 @@
 import argparse
 from pathlib import Path
 
+import torch
 from data_loader import DataLoader
 from models import DiT_S_4
-import torch
 
 
 def parse_args() -> argparse.Namespace:
