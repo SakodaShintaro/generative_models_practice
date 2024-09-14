@@ -84,7 +84,7 @@ def center_crop_arr(pil_image: Image, image_size: int) -> Image:
 #################################################################################
 
 
-def main(args: argparse.Namespace) -> None:
+def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     """Trains a new DiT model."""
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
