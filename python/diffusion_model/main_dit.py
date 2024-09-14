@@ -96,12 +96,8 @@ def main(args):
 
     # Setup an experiment folder:
     Path(args.results_dir).mkdir(parents=True, exist_ok=True)
-    experiment_index = len(list(Path(args.results_dir).glob("*")))
     model_name = "DiT-XL/2"
-    model_string_name = model_name.replace(
-        "/", "-"
-    )  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-    experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+    experiment_dir = f"{args.results_dir}"
     checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     logger = create_logger(experiment_dir)
@@ -116,12 +112,12 @@ def main(args):
     requires_grad(ema, flag=False)
     model = model.to(device)
     diffusion = create_diffusion(
-        timestep_respacing=""
+        timestep_respacing="",
     )  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
+    # Setup optimizer
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     # Setup data:
@@ -165,7 +161,7 @@ def main(args):
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            model_kwargs = dict(y=y)
+            model_kwargs = {"y": y}
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
@@ -212,7 +208,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
@@ -220,9 +215,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
-    parser.add_argument(
-        "--vae", type=str, choices=["ema", "mse"], default="ema"
-    )  # Choice doesn't affect training
+    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
