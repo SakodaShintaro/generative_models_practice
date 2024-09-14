@@ -1,6 +1,6 @@
 """DataLoader class for loading images from a directory."""
 
-from glob import glob
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -9,19 +9,19 @@ import numpy as np
 class DataLoader:
     """DataLoader class for loading images from a directory."""
 
-    def __init__(self, data_dir: str, batch_size: int) -> None:
-        self._image_path_list = glob(f"{data_dir}/*.png")
+    def __init__(self, data_dir: Path, batch_size: int) -> None:
+        self._image_path_list = list(Path(data_dir).glob("*.png"))
         self.batch_size = batch_size
 
-    def _load_image(self, path: str) -> np.ndarray:
-        img = cv2.imread(path)
+    def _load_image(self, path: Path) -> np.ndarray:
+        img = cv2.imread(str(path))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         return img / 255.0
 
     def __iter__(self) -> "DataLoader":
         """Return an iterator object."""
         self._index = 0
-        np.random.shuffle(self._image_path_list)
+        np.random.default_rng().shuffle(self._image_path_list)
         return self
 
     def __next__(self) -> np.ndarray:
