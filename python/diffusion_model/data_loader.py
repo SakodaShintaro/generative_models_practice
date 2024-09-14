@@ -31,6 +31,7 @@ class DataLoader:
         batch_paths = self._image_path_list[self._index : self._index + self.batch_size]
         batch_images = [self._load_image(path) for path in batch_paths]
         batch_images = np.array(batch_images, dtype=np.float32)
+        batch_images = np.transpose(batch_images, (0, 3, 1, 2))
 
         self._index += self.batch_size
         return batch_images
