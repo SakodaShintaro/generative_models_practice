@@ -127,7 +127,7 @@ def main(args):
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
-        ]
+        ],
     )
     dataset = STL10(args.data_path, split="train", transform=transform)
     loader = DataLoader(
@@ -182,7 +182,9 @@ def main(args):
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 avg_loss = avg_loss.item()
                 logger.info(
-                    f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}"
+                    f"(step={train_steps:07d}) "
+                    f"Train Loss: {avg_loss:.4f}, "
+                    f"Train Steps/Sec: {steps_per_sec:.2f}",
                 )
                 # Reset monitoring variables:
                 running_loss = 0
