@@ -15,7 +15,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 from torch.utils.data import DataLoader
 from torch.utils.data import Sampler
-from torchvision.datasets import ImageFolder
+from torchvision.datasets import ImageFolder, STL10
 from torchvision import transforms
 import numpy as np
 from collections import OrderedDict
@@ -149,15 +149,15 @@ def main(args):
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ]
     )
-    dataset = ImageFolder(args.data_path, transform=transform)
-    sampler = Sampler(
-        dataset, shuffle=True, seed=seed,
-    )
+    # dataset = ImageFolder(args.data_path, transform=transform)
+    dataset = STL10(args.data_path, split="train", transform=transform)
+    # sampler = Sampler(
+    #     dataset, shuffle=True, seed=seed,
+    # )
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size),
         shuffle=False,
-        sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True,
@@ -165,7 +165,7 @@ def main(args):
     logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
 
     # Prepare models for training:
-    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+    update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
@@ -177,7 +177,7 @@ def main(args):
 
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
-        sampler.set_epoch(epoch)
+        # sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, y in loader:
             x = x.to(device)
@@ -192,7 +192,7 @@ def main(args):
             opt.zero_grad()
             loss.backward()
             opt.step()
-            update_ema(ema, model.module)
+            update_ema(ema, model)
 
             # Log loss values:
             running_loss += loss.item()
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
