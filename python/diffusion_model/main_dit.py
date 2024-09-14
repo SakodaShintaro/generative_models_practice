@@ -33,23 +33,22 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 @torch.no_grad()
-def update_ema(ema_model, model, decay=0.9999):
+def update_ema(ema_model: torch.nn.Module, model: torch.nn.Module, decay: float = 0.9999) -> None:
     """Step the EMA model towards the current model."""
     ema_params = OrderedDict(ema_model.named_parameters())
     model_params = OrderedDict(model.named_parameters())
 
     for name, param in model_params.items():
-        # TODO: Consider applying only to params that require_grad to avoid small numerical changes of pos_embed
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
 
 
-def requires_grad(model, flag=True):
+def requires_grad(model: torch.nn.Module, flag: bool) -> None:  # noqa: FBT001
     """Set requires_grad flag for all parameters in a model."""
     for p in model.parameters():
         p.requires_grad = flag
 
 
-def create_logger(logging_dir):
+def create_logger(logging_dir: str) -> logging.Logger:
     """Create a logger that writes to a log file and stdout."""
     logging.basicConfig(
         level=logging.INFO,
@@ -60,7 +59,7 @@ def create_logger(logging_dir):
     return logging.getLogger(__name__)
 
 
-def center_crop_arr(pil_image, image_size):
+def center_crop_arr(pil_image: Image, image_size: int) -> Image:
     """Center cropping implementation from ADM.
 
     https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
@@ -70,7 +69,8 @@ def center_crop_arr(pil_image, image_size):
 
     scale = image_size / min(*pil_image.size)
     pil_image = pil_image.resize(
-        tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
+        tuple(round(x * scale) for x in pil_image.size),
+        resample=Image.BICUBIC,
     )
 
     arr = np.array(pil_image)
@@ -84,7 +84,7 @@ def center_crop_arr(pil_image, image_size):
 #################################################################################
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     """Trains a new DiT model."""
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
@@ -114,7 +114,7 @@ def main(args):
     diffusion = create_diffusion(
         timestep_respacing="",
     )  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer
@@ -217,7 +217,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
