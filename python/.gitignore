@@ -3,3 +3,4 @@
 events.*
 _METADATA
 checkpoint
+.env
