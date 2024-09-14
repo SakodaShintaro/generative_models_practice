@@ -1,5 +1,8 @@
+"""main."""
+
 import argparse
 from pathlib import Path
+
 from data_loader import DataLoader
 
 
