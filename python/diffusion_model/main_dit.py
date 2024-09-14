@@ -6,20 +6,15 @@
 
 """A minimal training script for DiT."""
 
-import torch
-
-# the first flag below was False when we tested this script but True makes A100 training a lot faster:
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
 import argparse
 import logging
-import os
 from collections import OrderedDict
 from copy import deepcopy
-from glob import glob
+from pathlib import Path
 from time import time
 
 import numpy as np
+import torch
 from diffusers.models import AutoencoderKL
 from diffusion import create_diffusion
 from models import DiT_models
@@ -27,7 +22,10 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import STL10
-from pathlib import Path
+
+# the first flag below was False when we tested this script but True makes training a lot faster:
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 #################################################################################
 #                             Training Helper Functions                         #
