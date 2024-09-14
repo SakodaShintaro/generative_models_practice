@@ -4,33 +4,30 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""
-A minimal training script for DiT.
-"""
+"""A minimal training script for DiT."""
 
 import torch
 
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-from torch.utils.data import DataLoader
-from torch.utils.data import Sampler
-from torchvision.datasets import ImageFolder, STL10
-from torchvision import transforms
-import numpy as np
-from collections import OrderedDict
-from PIL import Image
-from copy import deepcopy
-from glob import glob
-from time import time
 import argparse
 import logging
 import os
+from collections import OrderedDict
+from copy import deepcopy
+from glob import glob
+from time import time
 
-from models import DiT_models
-from diffusion import create_diffusion
+import numpy as np
 from diffusers.models import AutoencoderKL
-
+from diffusion import create_diffusion
+from models import DiT_models
+from PIL import Image
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from torchvision.datasets import STL10
+from pathlib import Path
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -39,9 +36,7 @@ from diffusers.models import AutoencoderKL
 
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
-    """
-    Step the EMA model towards the current model.
-    """
+    """Step the EMA model towards the current model."""
     ema_params = OrderedDict(ema_model.named_parameters())
     model_params = OrderedDict(model.named_parameters())
 
@@ -51,30 +46,25 @@ def update_ema(ema_model, model, decay=0.9999):
 
 
 def requires_grad(model, flag=True):
-    """
-    Set requires_grad flag for all parameters in a model.
-    """
+    """Set requires_grad flag for all parameters in a model."""
     for p in model.parameters():
         p.requires_grad = flag
 
 
 def create_logger(logging_dir):
-    """
-    Create a logger that writes to a log file and stdout.
-    """
+    """Create a logger that writes to a log file and stdout."""
     logging.basicConfig(
         level=logging.INFO,
         format="[\033[34m%(asctime)s\033[0m] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")],
     )
-    logger = logging.getLogger(__name__)
-    return logger
+    return logging.getLogger(__name__)
 
 
 def center_crop_arr(pil_image, image_size):
-    """
-    Center cropping implementation from ADM.
+    """Center cropping implementation from ADM.
+
     https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
     """
     while min(*pil_image.size) >= 2 * image_size:
@@ -97,9 +87,7 @@ def center_crop_arr(pil_image, image_size):
 
 
 def main(args):
-    """
-    Trains a new DiT model.
-    """
+    """Trains a new DiT model."""
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     device = 0
@@ -109,17 +97,15 @@ def main(args):
     print(f"Starting seed={seed}.")
 
     # Setup an experiment folder:
-    os.makedirs(
-        args.results_dir, exist_ok=True
-    )  # Make results folder (holds all experiment subfolders)
-    experiment_index = len(glob(f"{args.results_dir}/*"))
+    Path(args.results_dir).mkdir(parents=True, exist_ok=True)
+    experiment_index = len(list(Path(args.results_dir).glob("*")))
     model_name = "DiT-XL/2"
     model_string_name = model_name.replace(
         "/", "-"
     )  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
     experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
     checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
-    os.makedirs(checkpoint_dir, exist_ok=True)
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     logger = create_logger(experiment_dir)
     logger.info(f"Experiment directory created at {experiment_dir}")
 
@@ -129,7 +115,7 @@ def main(args):
     model = DiT_models[model_name](input_size=latent_size, num_classes=args.num_classes)
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    requires_grad(ema, False)
+    requires_grad(ema, flag=False)
     model = model.to(device)
     diffusion = create_diffusion(
         timestep_respacing=""
@@ -149,11 +135,7 @@ def main(args):
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ]
     )
-    # dataset = ImageFolder(args.data_path, transform=transform)
     dataset = STL10(args.data_path, split="train", transform=transform)
-    # sampler = Sampler(
-    #     dataset, shuffle=True, seed=seed,
-    # )
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size),
@@ -177,7 +159,6 @@ def main(args):
 
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
-        # sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, y in loader:
             x = x.to(device)
