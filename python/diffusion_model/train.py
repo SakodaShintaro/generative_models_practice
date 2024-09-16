@@ -129,6 +129,7 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
         ],
     )
     dataset = STL10(args.data_path, split="train", transform=transform)
+    # dataset = STL10(args.data_path, split="train+unlabeled", transform=transform)
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size),
@@ -156,6 +157,8 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
         for x, y in loader:
             x = x.to(device)
             y = y.to(device)
+            # -1であるラベルはclass_numに変換する
+            y = torch.where(y == -1, torch.tensor(args.num_classes, device=device), y)
             with torch.no_grad():
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
