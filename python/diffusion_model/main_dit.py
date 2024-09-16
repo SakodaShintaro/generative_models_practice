@@ -96,7 +96,6 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
 
     # Setup an experiment folder:
     Path(args.results_dir).mkdir(parents=True, exist_ok=True)
-    model_name = "DiT-XL/2"
     experiment_dir = f"{args.results_dir}"
     checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
@@ -106,7 +105,7 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiT_models[model_name](input_size=latent_size, num_classes=args.num_classes)
+    model = DiT_models[args.model](input_size=latent_size, num_classes=args.num_classes)
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, flag=False)
@@ -222,10 +221,11 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-path", type=str, required=True)
-    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--data-path", type=str, required=True)
+    parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--num-workers", type=int, default=4)
