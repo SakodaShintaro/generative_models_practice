@@ -19,6 +19,40 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
+def sample_images(model: torch.nn.Module, vae: AutoencoderKL) -> torch.Tensor:
+    diffusion = create_diffusion(str(250))
+    latent_size = 96 // 8
+    num_classes = 10
+    device = model.parameters().__next__().device
+
+    # Labels to condition the model with (feel free to change):
+    class_labels = list(range(num_classes))
+
+    # Create sampling noise:
+    n = len(class_labels)
+    z = torch.randn(n, 4, latent_size, latent_size, device=device)
+    y = torch.tensor(class_labels, device=device)
+
+    # Setup classifier-free guidance:
+    z = torch.cat([z, z], 0)
+    y_null = torch.tensor([num_classes] * n, device=device)
+    y = torch.cat([y, y_null], 0)
+    model_kwargs = {"y": y, "cfg_scale": 4.0}
+
+    # Sample images:
+    samples = diffusion.p_sample_loop(
+        model.forward_with_cfg,
+        z.shape,
+        z,
+        clip_denoised=False,
+        model_kwargs=model_kwargs,
+        progress=True,
+        device=device,
+    )
+    samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+    return vae.decode(samples / 0.18215).sample
+
+
 def main(args: argparse.Namespace) -> None:
     # Setup PyTorch:
     torch.manual_seed(args.seed)
@@ -34,35 +68,9 @@ def main(args: argparse.Namespace) -> None:
     state_dict = state_dict["ema"]
     model.load_state_dict(state_dict)
     model.eval()  # important!
-    diffusion = create_diffusion(str(args.num_sampling_steps))
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
 
-    # Labels to condition the model with (feel free to change):
-    class_labels = list(range(num_classes))
-
-    # Create sampling noise:
-    n = len(class_labels)
-    z = torch.randn(n, 4, latent_size, latent_size, device=device)
-    y = torch.tensor(class_labels, device=device)
-
-    # Setup classifier-free guidance:
-    z = torch.cat([z, z], 0)
-    y_null = torch.tensor([num_classes] * n, device=device)
-    y = torch.cat([y, y_null], 0)
-    model_kwargs = {"y": y, "cfg_scale": args.cfg_scale}
-
-    # Sample images:
-    samples = diffusion.p_sample_loop(
-        model.forward_with_cfg,
-        z.shape,
-        z,
-        clip_denoised=False,
-        model_kwargs=model_kwargs,
-        progress=True,
-        device=device,
-    )
-    samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-    samples = vae.decode(samples / 0.18215).sample
+    samples = sample_images(model, vae)
 
     # Save and display images:
     save_dir = args.ckpt.parent.parent
