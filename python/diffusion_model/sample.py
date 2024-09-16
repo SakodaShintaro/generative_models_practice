@@ -7,6 +7,7 @@
 """Sample new images from a pre-trained DiT."""
 
 import argparse
+from pathlib import Path
 
 import torch
 from diffusers.models import AutoencoderKL
@@ -26,10 +27,10 @@ def main(args: argparse.Namespace) -> None:
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](input_size=latent_size, num_classes=args.num_classes).to(device)
+    num_classes = args.num_classes
+    model = DiT_models[args.model](input_size=latent_size, num_classes=num_classes).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
-    ckpt_path = args.ckpt
-    state_dict = torch.load(ckpt_path)
+    state_dict = torch.load(str(args.ckpt))
     state_dict = state_dict["ema"]
     model.load_state_dict(state_dict)
     model.eval()  # important!
@@ -37,7 +38,7 @@ def main(args: argparse.Namespace) -> None:
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
 
     # Labels to condition the model with (feel free to change):
-    class_labels = list(range(10))
+    class_labels = list(range(num_classes))
 
     # Create sampling noise:
     n = len(class_labels)
@@ -46,7 +47,7 @@ def main(args: argparse.Namespace) -> None:
 
     # Setup classifier-free guidance:
     z = torch.cat([z, z], 0)
-    y_null = torch.tensor([10] * n, device=device)
+    y_null = torch.tensor([num_classes] * n, device=device)
     y = torch.cat([y, y_null], 0)
     model_kwargs = {"y": y, "cfg_scale": args.cfg_scale}
 
@@ -64,7 +65,8 @@ def main(args: argparse.Namespace) -> None:
     samples = vae.decode(samples / 0.18215).sample
 
     # Save and display images:
-    save_image(samples, "sample.png", nrow=4, normalize=True, value_range=(-1, 1))
+    save_dir = args.ckpt.parent.parent
+    save_image(samples, save_dir / "sample.png", nrow=4, normalize=True, value_range=(-1, 1))
 
 
 if __name__ == "__main__":
@@ -75,6 +77,6 @@ if __name__ == "__main__":
     parser.add_argument("--cfg-scale", type=float, default=4.0)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--ckpt", type=str, required=True)
+    parser.add_argument("--ckpt", type=Path, required=True)
     args = parser.parse_args()
     main(args)
