@@ -19,9 +19,11 @@ from diffusers.models import AutoencoderKL
 from diffusion import create_diffusion
 from models import DiT_models
 from PIL import Image
+from sample import sample_images
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import STL10
+from torchvision.utils import save_image
 
 # the first flag below was False when we tested this script but True makes training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -95,12 +97,12 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     print(f"Starting seed={seed}.")
 
     # Setup an experiment folder:
-    Path(args.results_dir).mkdir(parents=True, exist_ok=True)
-    experiment_dir = f"{args.results_dir}"
-    checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
-    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-    logger = create_logger(experiment_dir)
-    logger.info(f"Experiment directory created at {experiment_dir}")
+    results_dir = args.results_dir
+    results_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = results_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    logger = create_logger(results_dir)
+    logger.info(f"Experiment directory created at {results_dir}")
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
@@ -204,6 +206,16 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
                 checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
+                model.eval()
+                samples = sample_images(model, vae)
+                save_image(
+                    samples,
+                    results_dir / f"sample_{train_steps:07d}.png",
+                    nrow=4,
+                    normalize=True,
+                    value_range=(-1, 1),
+                )
+                model.train()
 
     # Save final checkpoint:
     checkpoint = {
@@ -216,8 +228,15 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     torch.save(checkpoint, checkpoint_path)
     logger.info(f"Saved checkpoint to {checkpoint_path}")
 
-    model.eval()  # important! This disables randomized embedding dropout
-    # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
+    model.eval()
+    samples = sample_images(model, vae)
+    save_image(
+        samples,
+        results_dir / "sample_last.png",
+        nrow=4,
+        normalize=True,
+        value_range=(-1, 1),
+    )
 
     logger.info("Done!")
 
@@ -228,7 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--data-path", type=str, required=True)
-    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--results-dir", type=Path, default="results")
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--num-workers", type=int, default=4)
