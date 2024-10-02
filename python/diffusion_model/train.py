@@ -13,16 +13,13 @@ from copy import deepcopy
 from pathlib import Path
 from time import time
 
-import numpy as np
 import torch
 from diffusers.models import AutoencoderKL
 from diffusion import create_diffusion
 from models import DiT_models
-from PIL import Image
 from sample import sample_images
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.datasets import STL10
 from torchvision.utils import save_image
 
 # the first flag below was False when we tested this script but True makes training a lot faster:
@@ -59,26 +56,6 @@ def create_logger(logging_dir: str) -> logging.Logger:
         handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")],
     )
     return logging.getLogger(__name__)
-
-
-def center_crop_arr(pil_image: Image, image_size: int) -> Image:
-    """Center cropping implementation from ADM.
-
-    https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
-    """
-    while min(*pil_image.size) >= 2 * image_size:
-        pil_image = pil_image.resize(tuple(x // 2 for x in pil_image.size), resample=Image.BOX)
-
-    scale = image_size / min(*pil_image.size)
-    pil_image = pil_image.resize(
-        tuple(round(x * scale) for x in pil_image.size),
-        resample=Image.BICUBIC,
-    )
-
-    arr = np.array(pil_image)
-    crop_y = (arr.shape[0] - image_size) // 2
-    crop_x = (arr.shape[1] - image_size) // 2
-    return Image.fromarray(arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size])
 
 
 #################################################################################
@@ -124,14 +101,24 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     # Setup data:
     transform = transforms.Compose(
         [
-            transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
-            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ],
     )
-    dataset = STL10(args.data_path, split="train", transform=transform)
-    # dataset = STL10(args.data_path, split="train+unlabeled", transform=transform)
+    dataset = None
+    if args.dataset == "mnist":
+        from torchvision.datasets import MNIST
+
+        dataset = MNIST(args.data_path, train=True, transform=transform, download=True)
+    elif args.dataset == "cifar10":
+        from torchvision.datasets import CIFAR10
+
+        dataset = CIFAR10(args.data_path, train=True, transform=transform, download=True)
+    elif args.dataset == "stl10":
+        from torchvision.datasets import STL10
+
+        dataset = STL10(args.data_path, split="train", transform=transform, download=True)
+
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size),
@@ -243,15 +230,16 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--image-size", type=int, default=256)
-    parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-S/2")
+    parser.add_argument("--image-size", type=int, default=128)
+    parser.add_argument("--num-classes", type=int, default=10)
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--results-dir", type=Path, default="results")
     parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--global-batch-size", type=int, default=256)
+    parser.add_argument("--global-batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     args = parser.parse_args()
     main(args)
