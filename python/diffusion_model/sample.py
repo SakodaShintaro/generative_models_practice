@@ -31,10 +31,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def sample_images(model: torch.nn.Module, vae: AutoencoderKL) -> torch.Tensor:
+def sample_images(
+    model: torch.nn.Module,
+    vae: AutoencoderKL,
+    args: argparse.Namespace,
+) -> torch.Tensor:
     diffusion = create_diffusion(str(250))
-    latent_size = 96 // 8
-    num_classes = 10
+    latent_size = args.image_size // 8
+    num_classes = args.num_classes
     device = model.parameters().__next__().device
 
     # Labels to condition the model with (feel free to change):
@@ -84,7 +88,7 @@ if __name__ == "__main__":
     model.eval()  # important!
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
 
-    samples = sample_images(model, vae)
+    samples = sample_images(model, vae, args)
 
     # Save and display images:
     save_dir = args.ckpt.parent.parent

@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--global_batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
-    parser.add_argument("--ckpt_every", type=int, default=50_000)
+    parser.add_argument("--ckpt_every", type=int, default=50_00)
     parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     return parser.parse_args()
 
@@ -201,7 +201,7 @@ if __name__ == "__main__":
                 start_time = time()
 
             # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0 and train_steps > 0:
+            if train_steps % args.ckpt_every == 0 or train_steps == 1:
                 checkpoint = {
                     "model": model.state_dict(),
                     "ema": ema.state_dict(),
@@ -212,7 +212,7 @@ if __name__ == "__main__":
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
                 model.eval()
-                samples = sample_images(model, vae)
+                samples = sample_images(model, vae, args)
                 save_image(
                     samples,
                     results_dir / f"sample_{train_steps:07d}.png",
