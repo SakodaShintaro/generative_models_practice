@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_classes", type=int, default=10)
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--results_dir", type=Path, default="results")
-    parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--global_batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=140)
+    parser.add_argument("--global_batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--ckpt_every", type=int, default=50_00)
@@ -127,6 +127,14 @@ if __name__ == "__main__":
     if args.dataset == "mnist":
         from torchvision.datasets import MNIST
 
+        transform = transforms.Compose(
+            [
+                transforms.Resize((args.image_size, args.image_size)),
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x.repeat(3, 1, 1)),  # 1chのMNISTを3chに変換
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
+            ],
+        )
         dataset = MNIST(args.data_path, train=True, transform=transform, download=True)
     elif args.dataset == "cifar10":
         from torchvision.datasets import CIFAR10
