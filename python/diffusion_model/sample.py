@@ -21,9 +21,6 @@ torch.backends.cudnn.allow_tf32 = True
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--image_size", type=int, default=256)
-    parser.add_argument("--num_classes", type=int, default=1000)
     parser.add_argument("--cfg-scale", type=float, default=4.0)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--seed", type=int, default=0)
@@ -78,18 +75,26 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load model:
-    latent_size = args.image_size // 8
-    num_classes = args.num_classes
-    model = DiT_models[args.model](input_size=latent_size, num_classes=num_classes).to(device)
-    # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     state_dict = torch.load(str(args.ckpt))
-    state_dict = state_dict["ema"]
-    model.load_state_dict(state_dict)
-    model.eval()  # important!
+    train_args = state_dict["args"]
+
+    latent_size = train_args.image_size // 8
+    num_classes = train_args.num_classes
+    model = DiT_models[train_args.model](input_size=latent_size, num_classes=num_classes).to(device)
+
+    # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
+    model.load_state_dict(state_dict["model"])
+    model.eval()
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
 
-    samples = sample_images(model, vae, args)
+    samples = sample_images(model, vae, train_args)
 
     # Save and display images:
     save_dir = args.ckpt.parent.parent
-    save_image(samples, save_dir / "sample.png", nrow=4, normalize=True, value_range=(-1, 1))
+    save_image(
+        samples,
+        save_dir / f"sample_{args.seed:04d}.png",
+        nrow=4,
+        normalize=True,
+        value_range=(-1, 1),
+    )
