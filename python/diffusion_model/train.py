@@ -31,6 +31,22 @@ torch.backends.cudnn.allow_tf32 = True
 #################################################################################
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-S/2")
+    parser.add_argument("--image_size", type=int, default=128)
+    parser.add_argument("--num_classes", type=int, default=10)
+    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--results_dir", type=Path, default="results")
+    parser.add_argument("--epochs", type=int, default=1400)
+    parser.add_argument("--global_batch_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--log_every", type=int, default=100)
+    parser.add_argument("--ckpt_every", type=int, default=50_000)
+    parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
+    return parser.parse_args()
+
+
 @torch.no_grad()
 def update_ema(ema_model: torch.nn.Module, model: torch.nn.Module, decay: float = 0.9999) -> None:
     """Step the EMA model towards the current model."""
@@ -63,9 +79,11 @@ def create_logger(logging_dir: str) -> logging.Logger:
 #################################################################################
 
 
-def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
+if __name__ == "__main__":
     """Trains a new DiT model."""
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
+
+    args = parse_args()
 
     device = 0
     seed = 0
@@ -226,20 +244,3 @@ def main(args: argparse.Namespace) -> None:  # noqa: PLR0915
     )
 
     logger.info("Done!")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-S/2")
-    parser.add_argument("--image_size", type=int, default=128)
-    parser.add_argument("--num_classes", type=int, default=10)
-    parser.add_argument("--data_path", type=str, required=True)
-    parser.add_argument("--results_dir", type=Path, default="results")
-    parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--global_batch_size", type=int, default=32)
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--log_every", type=int, default=100)
-    parser.add_argument("--ckpt_every", type=int, default=50_000)
-    parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
-    args = parser.parse_args()
-    main(args)

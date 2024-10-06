@@ -19,6 +19,18 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--image_size", type=int, default=256)
+    parser.add_argument("--num_classes", type=int, default=1000)
+    parser.add_argument("--cfg-scale", type=float, default=4.0)
+    parser.add_argument("--num-sampling-steps", type=int, default=250)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--ckpt", type=Path, required=True)
+    return parser.parse_args()
+
+
 def sample_images(model: torch.nn.Module, vae: AutoencoderKL) -> torch.Tensor:
     diffusion = create_diffusion(str(250))
     latent_size = 96 // 8
@@ -53,7 +65,9 @@ def sample_images(model: torch.nn.Module, vae: AutoencoderKL) -> torch.Tensor:
     return vae.decode(samples / 0.18215).sample
 
 
-def main(args: argparse.Namespace) -> None:
+if __name__ == "__main__":
+    args = parse_args()
+
     # Setup PyTorch:
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False)
@@ -75,16 +89,3 @@ def main(args: argparse.Namespace) -> None:
     # Save and display images:
     save_dir = args.ckpt.parent.parent
     save_image(samples, save_dir / "sample.png", nrow=4, normalize=True, value_range=(-1, 1))
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--image_size", type=int, default=256)
-    parser.add_argument("--num_classes", type=int, default=1000)
-    parser.add_argument("--cfg-scale", type=float, default=4.0)
-    parser.add_argument("--num-sampling-steps", type=int, default=250)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--ckpt", type=Path, required=True)
-    args = parser.parse_args()
-    main(args)
