@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt_every", type=int, default=50_00)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
+    parser.add_argument("--cfg_scale", type=float, default=4.0)
     return parser.parse_args()
 
 
@@ -92,15 +93,22 @@ def sample_images(
     z = torch.randn(n, 4, latent_size, latent_size, device=device)
     y = torch.tensor(class_labels, device=device)
 
+    # add null
+    z = torch.cat([z, z], 0)
+    y_null = torch.tensor([num_classes] * n, device=device)
+    y = torch.cat([y, y_null], 0)
+
     with torch.no_grad():
         dt = 1.0 / sample_n
         for i in range(sample_n):
             num_t = i / sample_n * (1 - eps) + eps
             t = torch.ones(n, device=device) * num_t
-            pred = model(z, t * 999, y)
+            t = torch.cat([t, t], 0)
+            pred = model.forward_with_cfg(z, t * 999, y, args.cfg_scale)
 
             z = z.detach().clone() + pred * dt
 
+        z = torch.split(z, n, dim=0)[0]
         return vae.decode(z / 0.18215).sample
 
 #################################################################################
