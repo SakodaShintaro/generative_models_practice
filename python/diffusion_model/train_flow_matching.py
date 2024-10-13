@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--ckpt_every", type=int, default=50_00)
+    parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     return parser.parse_args()
 
@@ -79,7 +80,7 @@ def sample_images(
     args: argparse.Namespace,
     sample_n: int = 10,
 ) -> torch.Tensor:
-    latent_size = args.image_size // 8
+    latent_size = image_size // 8
     num_classes = args.num_classes
     device = model.parameters().__next__().device
 
@@ -128,15 +129,21 @@ if __name__ == "__main__":
     logger.info(f"Experiment directory created at {results_dir}")
 
     # Create model:
-    assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // 8
+    image_size = args.image_size
+    assert image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+    latent_size = image_size // 8
+    ckpt = torch.load(args.ckpt) if args.ckpt is not None else None
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes,
         learn_sigma=False,
     )
+    if ckpt is not None:
+        model.load_state_dict(ckpt["model"])
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
+    if ckpt is not None:
+        ema.load_state_dict(ckpt["ema"])
     requires_grad(ema, flag=False)
     model = model.to(device)
     diffusion = create_diffusion(
@@ -147,6 +154,8 @@ if __name__ == "__main__":
 
     # Setup optimizer
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    if ckpt is not None:
+        opt.load_state_dict(ckpt["opt"])
 
     # Setup data:
     transform = transforms.Compose(
@@ -161,7 +170,7 @@ if __name__ == "__main__":
 
         transform = transforms.Compose(
             [
-                transforms.Resize((args.image_size, args.image_size)),
+                transforms.Resize((image_size, image_size)),
                 transforms.ToTensor(),
                 transforms.Lambda(lambda x: x.repeat(3, 1, 1)),  # 1chのMNISTを3chに変換
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
