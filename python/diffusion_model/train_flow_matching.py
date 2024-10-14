@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results_dir", type=Path, default="results")
     parser.add_argument("--epochs", type=int, default=140)
     parser.add_argument("--global_batch_size", type=int, default=64)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--ckpt_every", type=int, default=50_00)
@@ -62,17 +63,6 @@ def requires_grad(model: torch.nn.Module, flag: bool) -> None:  # noqa: FBT001
     """Set requires_grad flag for all parameters in a model."""
     for p in model.parameters():
         p.requires_grad = flag
-
-
-def create_logger(logging_dir: str) -> logging.Logger:
-    """Create a logger that writes to a log file and stdout."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[\033[34m%(asctime)s\033[0m] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")],
-    )
-    return logging.getLogger(__name__)
 
 
 def sample_images(
@@ -122,6 +112,7 @@ def save_ckpt(
 ) -> None:
     results_dir = args.results_dir
     checkpoint_dir = results_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{checkpoint_dir}/{train_steps:08d}.pt"
     checkpoint = {
         "model": model.state_dict(),
@@ -132,9 +123,11 @@ def save_ckpt(
     torch.save(checkpoint, checkpoint_path)
     model.eval()
     samples = sample_images(model, vae, args)
+    sample_dir = results_dir / "samples"
+    sample_dir.mkdir(parents=True, exist_ok=True)
     save_image(
         samples,
-        results_dir / f"sample_{train_steps:08d}.png",
+        sample_dir / f"{train_steps:08d}.png",
         nrow=4,
         normalize=True,
         value_range=(-1, 1),
@@ -161,9 +154,13 @@ if __name__ == "__main__":
     # Setup an experiment folder:
     results_dir = args.results_dir
     results_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_dir = results_dir / "checkpoints"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    logger = create_logger(results_dir)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[\033[34m%(asctime)s\033[0m] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(), logging.FileHandler(f"{results_dir}/log.txt")],
+    )
+    logger = logging.getLogger(__name__)
     logger.info(f"Experiment directory created at {results_dir}")
 
     # Create model:
@@ -188,7 +185,7 @@ if __name__ == "__main__":
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0)
     if ckpt is not None:
         opt.load_state_dict(ckpt["opt"])
 
