@@ -15,7 +15,6 @@ from time import time
 
 import torch
 from diffusers.models import AutoencoderKL
-from diffusion import create_diffusion
 from models import DiT_models
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -154,9 +153,6 @@ if __name__ == "__main__":
         ema.load_state_dict(ckpt["ema"])
     requires_grad(ema, flag=False)
     model = model.to(device)
-    diffusion = create_diffusion(
-        timestep_respacing="",
-    )  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -168,6 +164,7 @@ if __name__ == "__main__":
     # Setup data:
     transform = transforms.Compose(
         [
+            transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ],
