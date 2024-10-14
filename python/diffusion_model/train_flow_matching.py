@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     parser.add_argument("--cfg_scale", type=float, default=4.0)
+    parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
     return parser.parse_args()
 
 
@@ -78,7 +79,6 @@ def sample_images(
     model: torch.nn.Module,
     vae: AutoencoderKL,
     args: argparse.Namespace,
-    sample_n: int = 10,
 ) -> torch.Tensor:
     latent_size = image_size // 8
     num_classes = args.num_classes
@@ -97,6 +97,8 @@ def sample_images(
     y_null = torch.tensor([num_classes] * n, device=device)
     y = torch.cat([y, y_null], 0)
 
+    sample_n = args.nfe
+
     with torch.no_grad():
         dt = 1.0 / sample_n
         for i in range(sample_n):
@@ -109,6 +111,35 @@ def sample_images(
 
         z = torch.split(z, n, dim=0)[0]
         return vae.decode(z / 0.18215).sample
+
+
+def save_ckpt(
+    model: torch.nn.Module,
+    ema: torch.nn.Module,
+    opt: torch.optim.Optimizer,
+    args: argparse.Namespace,
+    train_steps: int,
+) -> None:
+    results_dir = args.results_dir
+    checkpoint_dir = results_dir / "checkpoints"
+    checkpoint_path = f"{checkpoint_dir}/{train_steps:08d}.pt"
+    checkpoint = {
+        "model": model.state_dict(),
+        "ema": ema.state_dict(),
+        "opt": opt.state_dict(),
+        "args": args,
+    }
+    torch.save(checkpoint, checkpoint_path)
+    model.eval()
+    samples = sample_images(model, vae, args)
+    save_image(
+        samples,
+        results_dir / f"sample_{train_steps:08d}.png",
+        nrow=4,
+        normalize=True,
+        value_range=(-1, 1),
+    )
+
 
 #################################################################################
 #                                  Training Loop                                #
@@ -214,6 +245,8 @@ if __name__ == "__main__":
 
     eps = 0.001
 
+    save_ckpt(model, ema, opt, args, train_steps)
+
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
         logger.info(f"Beginning epoch {epoch}...")
@@ -261,46 +294,10 @@ if __name__ == "__main__":
                 start_time = time()
 
             # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0 or train_steps == 1:
-                checkpoint = {
-                    "model": model.state_dict(),
-                    "ema": ema.state_dict(),
-                    "opt": opt.state_dict(),
-                    "args": args,
-                }
-                checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-                torch.save(checkpoint, checkpoint_path)
-                logger.info(f"Saved checkpoint to {checkpoint_path}")
-                model.eval()
-                samples = sample_images(model, vae, args)
-                save_image(
-                    samples,
-                    results_dir / f"sample_{train_steps:07d}.png",
-                    nrow=4,
-                    normalize=True,
-                    value_range=(-1, 1),
-                )
+            if train_steps % args.ckpt_every == 0:
+                save_ckpt(model, ema, opt, args, train_steps)
                 model.train()
 
     # Save final checkpoint:
-    checkpoint = {
-        "model": model.state_dict(),
-        "ema": ema.state_dict(),
-        "opt": opt.state_dict(),
-        "args": args,
-    }
-    checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-    torch.save(checkpoint, checkpoint_path)
-    logger.info(f"Saved checkpoint to {checkpoint_path}")
-
-    model.eval()
-    samples = sample_images(model, vae, args)
-    save_image(
-        samples,
-        results_dir / "sample_last.png",
-        nrow=4,
-        normalize=True,
-        value_range=(-1, 1),
-    )
-
+    save_ckpt(model, ema, opt, args, train_steps)
     logger.info("Done!")
