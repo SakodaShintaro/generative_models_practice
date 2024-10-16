@@ -37,11 +37,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--results_dir", type=Path, default="results")
     parser.add_argument("--epochs", type=int, default=140)
-    parser.add_argument("--global_batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
-    parser.add_argument("--ckpt_every", type=int, default=50_00)
+    parser.add_argument("--ckpt_every", type=int, default=500)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     parser.add_argument("--cfg_scale", type=float, default=4.0)
@@ -221,7 +221,7 @@ if __name__ == "__main__":
 
     loader = DataLoader(
         dataset,
-        batch_size=int(args.global_batch_size),
+        batch_size=int(args.batch_size),
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
