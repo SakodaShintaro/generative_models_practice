@@ -222,7 +222,7 @@ if __name__ == "__main__":
     loader = DataLoader(
         dataset,
         batch_size=int(args.batch_size),
-        shuffle=False,
+        shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True,
