@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 from cosmos_tokenizer.image_lib import ImageTokenizer
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +44,9 @@ if __name__ == "__main__":
     data_dir = args.data_dir
     ckpt_dir = args.ckpt_dir
 
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+
     model_name = "Cosmos-Tokenizer-DI8x8"
     input_tensor = torch.randn(1, 3, 512, 512).to("cuda").to(torch.bfloat16)  # [B, C, H, W]
     encoder = ImageTokenizer(checkpoint_enc=f"{ckpt_dir}/{model_name}/encoder.jit")
@@ -59,17 +62,32 @@ if __name__ == "__main__":
     torch.testing.assert_close(reconstructed_tensor.shape, input_tensor.shape)
 
     results = []
-    image_paths = list(data_dir.glob("*.jpg"))
+    image_paths = sorted(data_dir.glob("*.jpg"))
 
     all_set = set()
 
     count_map = defaultdict(int)
 
     for image_path in image_paths:
-        image = Image.open(image_path).convert("RGB")
-        image = np.array(image).transpose(2, 0, 1) / 255.0
+        original_image = Image.open(image_path).convert("RGB")
+        image = np.array(original_image).transpose(2, 0, 1) / 255.0
         image = torch.tensor(image, dtype=torch.bfloat16).unsqueeze(0).to("cuda")
         indices, codes = encoder.encode(image)
+
+        reconstructed_tensor = decoder.decode(indices)
+        reconstructed_image = reconstructed_tensor.to(torch.float32).squeeze(0).cpu().numpy()
+        reconstructed_image = (reconstructed_image * 255).astype(np.uint8).transpose(1, 2, 0)
+        reconstructed_image = Image.fromarray(reconstructed_image)
+
+        # 元画像と再構築画像を左右に並べて保存
+        comparison_image = Image.new("RGB", (original_image.width * 2, original_image.height))
+        comparison_image.paste(original_image, (0, 0))
+        comparison_image.paste(reconstructed_image, (original_image.width, 0))
+
+        # 画像を保存
+        output_path = output_dir / f"{image_path.stem}_comparison.jpg"
+        comparison_image.save(output_path)
+
         token_ids = indices.cpu().numpy().flatten()
 
         all_set.update(token_ids)
