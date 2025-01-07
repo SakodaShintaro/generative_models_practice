@@ -1,5 +1,8 @@
 *.pyc
 *.png
+*.jpg
+*.csv
+*.tsv
 events.*
 _METADATA
 checkpoint
