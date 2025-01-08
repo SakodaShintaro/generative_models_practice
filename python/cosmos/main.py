@@ -48,18 +48,8 @@ if __name__ == "__main__":
     output_dir.mkdir(exist_ok=True)
 
     model_name = "Cosmos-Tokenizer-DI8x8"
-    input_tensor = torch.randn(1, 3, 512, 512).to("cuda").to(torch.bfloat16)  # [B, C, H, W]
     encoder = ImageTokenizer(checkpoint_enc=f"{ckpt_dir}/{model_name}/encoder.jit")
-    (indices, codes) = encoder.encode(input_tensor)
-    print(indices.shape, codes.shape)
-    print(indices.dtype, codes.dtype)
-    torch.testing.assert_close(indices.shape, (1, 64, 64))
-    torch.testing.assert_close(codes.shape, (1, 6, 64, 64))
-
-    # The input tensor can be reconstructed by the decoder as:
     decoder = ImageTokenizer(checkpoint_dec=f"{ckpt_dir}/{model_name}/decoder.jit")
-    reconstructed_tensor = decoder.decode(indices)
-    torch.testing.assert_close(reconstructed_tensor.shape, input_tensor.shape)
 
     results = []
     image_paths = sorted(data_dir.glob("*.jpg"))
@@ -70,6 +60,10 @@ if __name__ == "__main__":
 
     for image_path in image_paths:
         original_image = Image.open(image_path).convert("RGB")
+        # (H, W) = (144, 256) にリサイズ
+        original_image = ImageOps.fit(
+            original_image, (256, 144), method=0, bleed=0.0, centering=(0.5, 0.5)
+        )
         image = np.array(original_image).transpose(2, 0, 1) / 255.0
         image = torch.tensor(image, dtype=torch.bfloat16).unsqueeze(0).to("cuda")
         indices, codes = encoder.encode(image)
