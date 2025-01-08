@@ -3,13 +3,14 @@
 import argparse
 from collections import defaultdict
 from pathlib import Path
+from shutil import rmtree
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 from cosmos_tokenizer.image_lib import ImageTokenizer
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,12 +40,33 @@ def analyze_image_tokens(token_ids):
     }
 
 
+def add_text_to_image(image: Image.Image, text: str) -> Image.Image:
+    """画像に文字を追加する関数"""
+    draw = ImageDraw.Draw(image)
+
+    # font = ImageFont.truetype("meiryo.ttc", 16)
+    # font = ImageFont.truetype("arial.ttf", 16)
+    font = ImageFont.load_default()
+
+    # 文字を描画（左上に配置）
+    draw.text((5, 5), text, font=font, fill=(255, 255, 255))  # 白色で描画
+
+    # 文字の視認性を上げるために黒い縁取りを追加
+    # draw.text((9, 10), text, font=font, fill=(0, 0, 0))
+    # draw.text((11, 10), text, font=font, fill=(0, 0, 0))
+    # draw.text((10, 9), text, font=font, fill=(0, 0, 0))
+    # draw.text((10, 11), text, font=font, fill=(0, 0, 0))
+
+    return image
+
+
 if __name__ == "__main__":
     args = parse_args()
     data_dir = args.data_dir
     ckpt_dir = args.ckpt_dir
 
     output_dir = Path("output")
+    rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=True)
 
     model_name = "Cosmos-Tokenizer-DI8x8"
@@ -70,8 +92,13 @@ if __name__ == "__main__":
 
         reconstructed_tensor = decoder.decode(indices)
         reconstructed_image = reconstructed_tensor.to(torch.float32).squeeze(0).cpu().numpy()
+        reconstructed_image = np.clip(reconstructed_image, 0, 1)
         reconstructed_image = (reconstructed_image * 255).astype(np.uint8).transpose(1, 2, 0)
         reconstructed_image = Image.fromarray(reconstructed_image)
+
+        # 左上に文字追加
+        original_image = add_text_to_image(original_image, "Original Image")
+        reconstructed_image = add_text_to_image(reconstructed_image, "Reconstructed Image")
 
         # 元画像と再構築画像を左右に並べて保存
         comparison_image = Image.new("RGB", (original_image.width * 2, original_image.height))
