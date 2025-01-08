@@ -1,4 +1,4 @@
-"""A script to analyze token usage in images using a pretrained Cosmos tokenizer."""
+"""A script to analyze token usage in images using a pretrained Cosmos tokenizer."""  # noqa: INP001
 
 import argparse
 from collections import defaultdict
@@ -20,42 +20,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# トークン化と統計の計算
-def analyze_image_tokens(token_ids):
-    # token_ids(1, 112, 200), torch.int32
-
-    token_ids = token_ids.cpu().numpy().flatten()
-
-    # 使用率
-    total_tokens = len(token_ids)
-    unique_tokens = len(set(token_ids))
-    usage_rate = unique_tokens / total_tokens
-
-    print(f"{total_tokens=}, {unique_tokens=}, {usage_rate=}")
-
-    return {
-        "total_tokens": total_tokens,
-        "unique_tokens": unique_tokens,
-        "usage_rate": usage_rate,
-    }
-
-
 def add_text_to_image(image: Image.Image, text: str) -> Image.Image:
-    """画像に文字を追加する関数"""
+    """画像に文字を追加する関数."""
     draw = ImageDraw.Draw(image)
-
-    # font = ImageFont.truetype("meiryo.ttc", 16)
-    # font = ImageFont.truetype("arial.ttf", 16)
     font = ImageFont.load_default()
 
     # 文字を描画（左上に配置）
     draw.text((5, 5), text, font=font, fill=(255, 255, 255))  # 白色で描画
-
-    # 文字の視認性を上げるために黒い縁取りを追加
-    # draw.text((9, 10), text, font=font, fill=(0, 0, 0))
-    # draw.text((11, 10), text, font=font, fill=(0, 0, 0))
-    # draw.text((10, 9), text, font=font, fill=(0, 0, 0))
-    # draw.text((10, 11), text, font=font, fill=(0, 0, 0))
 
     return image
 
@@ -84,7 +55,11 @@ if __name__ == "__main__":
         original_image = Image.open(image_path).convert("RGB")
         # (H, W) = (144, 256) にリサイズ
         original_image = ImageOps.fit(
-            original_image, (256, 144), method=0, bleed=0.0, centering=(0.5, 0.5)
+            original_image,
+            (256, 144),
+            method=0,
+            bleed=0.0,
+            centering=(0.5, 0.5),
         )
         image = np.array(original_image).transpose(2, 0, 1) / 255.0
         image = torch.tensor(image, dtype=torch.bfloat16).unsqueeze(0).to("cuda")
@@ -116,7 +91,19 @@ if __name__ == "__main__":
         for token_id in token_ids:
             count_map[token_id] += 1
 
-        stats = analyze_image_tokens(indices)
+        # 使用率
+        total_tokens = len(token_ids)
+        unique_tokens = len(set(token_ids))
+        unique_rate = unique_tokens / total_tokens
+
+        print(f"{total_tokens=}, {unique_tokens=}, {unique_rate=}")
+
+        stats = {
+            "total_tokens": total_tokens,
+            "unique_tokens": unique_tokens,
+            "unique_rate": unique_rate,
+        }
+
         results.append({"image": str(image_path), **stats})
 
     print(f"{len(all_set)=}")
@@ -124,14 +111,14 @@ if __name__ == "__main__":
     results_df = pd.DataFrame(results)
     print(results_df)
     results_df.to_csv("token_usage_analysis.csv", index=False)
-    plt.plot(results_df["usage_rate"])
+    plt.plot(results_df["unique_rate"])
     plt.xlabel("Image")
-    plt.ylabel("Usage Rate(=unique_tokens/total_tokens)")
-    plt.savefig("usage_rate.png", bbox_inches="tight", pad_inches=0.05)
+    plt.ylabel("Unique Rate(=unique_tokens/total_tokens)")
+    plt.ylim(0, 1)
+    plt.savefig("unique_rate.png", bbox_inches="tight", pad_inches=0.05)
     plt.close()
 
     # count_mapをソート
     count_map = sorted(count_map.items(), key=lambda x: x[1], reverse=True)
-    print(count_map)
     plt.bar(range(len(count_map)), [x[1] for x in count_map])
-    plt.savefig("histogram.png", bbox_inches="tight", pad_inches=0.05)
+    plt.savefig("histogram.png", bbox_inches="tight", pad_inches=0.05, dpi=300)
