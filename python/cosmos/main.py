@@ -1,6 +1,7 @@
 """A script to analyze token usage in images using a pretrained Cosmos tokenizer."""  # noqa: INP001
 
 import argparse
+import sys
 from collections import defaultdict
 from pathlib import Path
 from shutil import rmtree
@@ -36,9 +37,11 @@ if __name__ == "__main__":
     data_dir = args.data_dir
     ckpt_dir = args.ckpt_dir
 
-    output_dir = Path("output")
+    result_dir = Path("result")
+
+    output_dir = result_dir / "output"
     rmtree(output_dir, ignore_errors=True)
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True, parents=True)
 
     model_name = "Cosmos-Tokenizer-DI8x8"
     encoder = ImageTokenizer(checkpoint_enc=f"{ckpt_dir}/{model_name}/encoder.jit")
@@ -110,15 +113,17 @@ if __name__ == "__main__":
 
     results_df = pd.DataFrame(results)
     print(results_df)
-    results_df.to_csv("token_usage_analysis.csv", index=False)
+    results_df.to_csv(result_dir / "token_usage_analysis.csv", index=False)
     plt.plot(results_df["unique_rate"])
     plt.xlabel("Image")
     plt.ylabel("Unique Rate(=unique_tokens/total_tokens)")
     plt.ylim(0, 1)
-    plt.savefig("unique_rate.png", bbox_inches="tight", pad_inches=0.05)
+    plt.savefig(result_dir / "unique_rate.png", bbox_inches="tight", pad_inches=0.05)
     plt.close()
+
+    sys.exit(0)
 
     # count_mapをソート
     count_map = sorted(count_map.items(), key=lambda x: x[1], reverse=True)
     plt.bar(range(len(count_map)), [x[1] for x in count_map])
-    plt.savefig("histogram.png", bbox_inches="tight", pad_inches=0.05, dpi=300)
+    plt.savefig(result_dir / "histogram.png", bbox_inches="tight", pad_inches=0.05, dpi=300)
