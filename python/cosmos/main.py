@@ -74,6 +74,62 @@ if __name__ == "__main__":
         reconstructed_image = (reconstructed_image * 255).astype(np.uint8).transpose(1, 2, 0)
         reconstructed_image = Image.fromarray(reconstructed_image)
 
+        print(indices.shape, indices.dtype)
+
+        # ユニークじゃないIDを列挙
+        curr_count_map = defaultdict(int)
+        for token_id in indices.cpu().numpy().flatten():
+            curr_count_map[token_id] += 1
+        non_unique_tokens = [token_id for token_id, count in curr_count_map.items() if count > 1]
+        color_list = [
+            # 基本色（半透明）
+            (255, 0, 0, 128),  # 赤
+            (0, 255, 0, 128),  # 緑
+            (0, 0, 255, 128),  # 青
+            (255, 255, 0, 128),  # 黄
+            (0, 255, 255, 128),  # シアン
+            (255, 0, 255, 128),  # マゼンタ
+            (255, 255, 255, 128),  # 白
+            (0, 0, 0, 128),  # 黒
+            # 中間色
+            (255, 128, 0, 128),  # オレンジ
+            (128, 255, 0, 128),  # 黄緑
+            (0, 255, 128, 128),  # スプリンググリーン
+            (0, 128, 255, 128),  # スカイブルー
+            (128, 0, 255, 128),  # パープル
+            (255, 0, 128, 128),  # ピンク
+            # 暗め
+            (128, 0, 0, 128),  # ダークレッド
+            (0, 128, 0, 128),  # ダークグリーン
+            (0, 0, 128, 128),  # ダークブルー
+            (128, 128, 0, 128),  # オリーブ
+            (0, 128, 128, 128),  # ティール
+            (128, 0, 128, 128),  # パープル
+            # 明るめ
+            (255, 128, 128, 128),  # ライトレッド
+            (128, 255, 128, 128),  # ライトグリーン
+            (128, 128, 255, 128),  # ライトブルー
+            (255, 255, 128, 128),  # ライトイエロー
+            (128, 255, 255, 128),  # ライトシアン
+            (255, 128, 255, 128),  # ライトマゼンタ
+        ]
+        for k, non_unique_token in enumerate(non_unique_tokens):
+            print(f"Non-unique token: {non_unique_token}")
+            # recon画像に色付けする
+            for i in range(indices.shape[1]):
+                for j in range(indices.shape[2]):
+                    if indices[0, i, j] == non_unique_token:
+                        # 半透明の赤い長方形をオーバーレイ
+                        overlay = Image.new("RGBA", reconstructed_image.size, (0, 0, 0, 0))
+                        draw = ImageDraw.Draw(overlay)
+                        draw.rectangle(
+                            (j * 8, i * 8, (j + 1) * 8, (i + 1) * 8),
+                            fill=color_list[k % len(color_list)],
+                        )
+                        print(k, i, j)
+                        # RGBAに変換して合成
+                        reconstructed_image = reconstructed_image.convert("RGBA")
+                        reconstructed_image = Image.alpha_composite(reconstructed_image, overlay)
         # 左上に文字追加
         original_image = add_text_to_image(original_image, "Original Image")
         reconstructed_image = add_text_to_image(reconstructed_image, "Reconstructed Image")
