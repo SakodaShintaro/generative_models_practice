@@ -11,7 +11,7 @@ class DataLoader:
         self.batch_size = batch_size
 
     def _load_image(self, path: str) -> np.ndarray:
-        img = cv2.imread(path)
+        img = cv2.imread(str(path))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img / 255.0  # Normalize to [0, 1]
         return img
