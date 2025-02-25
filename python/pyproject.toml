@@ -5,6 +5,7 @@ line-length = 100
 select=["ALL"]
 extend-ignore=["D"]
 ignore=[
+    "ANN101",
     "D103", "D104", "D105", "D107",
     "FA102",
     "G004",
