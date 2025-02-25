@@ -15,7 +15,7 @@ class FSQ:
         self._levels = levels
         self._eps = eps
         self._levels_np = np.asarray(levels)
-        self._basis = np.concatenate(([1], np.cumprod(self._levels_np[:-1]))).astype(np.uint32)
+        self._basis = np.concatenate(([1], np.cumprod(self._levels_np[:-1]))).astype(np.int32)
 
         self._implicit_codebook = self.indexes_to_codes(torch.arange(self.codebook_size))
 
