@@ -232,13 +232,13 @@ if __name__ == "__main__":
         train_loss = train_epoch(model, train_loader, optimizer, criterion)
 
         # 検証
-        val_loss = validate(model, valid_loader, criterion)
+        valid_loss = validate(model, valid_loader, criterion)
 
-        print(f"Epoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        print(f"Epoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {valid_loss:.4f}")
 
         # モデル保存（検証ロスが改善した場合）
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if valid_loss < best_val_loss:
+            best_val_loss = valid_loss
             # DataParallelを使用している場合は .module にアクセスしてモデルを保存
             model_to_save = model.module if hasattr(model, "module") else model
             torch.save(
@@ -247,7 +247,7 @@ if __name__ == "__main__":
                     "model_state_dict": model_to_save.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "train_loss": train_loss,
-                    "val_loss": val_loss,
+                    "valid_loss": valid_loss,
                 },
                 args.save_dir / "transformer_best.pt",
             )
@@ -262,7 +262,7 @@ if __name__ == "__main__":
                     "model_state_dict": model_to_save.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "train_loss": train_loss,
-                    "val_loss": val_loss,
+                    "valid_loss": valid_loss,
                 },
                 args.save_dir / f"transformer_epoch_{epoch + 1}.pt",
             )
