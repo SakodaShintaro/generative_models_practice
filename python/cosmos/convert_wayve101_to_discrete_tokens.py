@@ -41,6 +41,10 @@ if __name__ == "__main__":
     model_name = f"Cosmos-Tokenizer-DI{COMPRESS_SCALE}x{COMPRESS_SCALE}"
     encoder = ImageTokenizer(checkpoint_enc=f"{ckpt_dir}/{model_name}/encoder.jit")
     decoder = ImageTokenizer(checkpoint_dec=f"{ckpt_dir}/{model_name}/decoder.jit")
+    encoder.eval()
+    decoder.eval()
+    encoder.to("cuda")
+    decoder.to("cuda")
 
     TARGET_SUBDIR = "front-forward"
 
@@ -66,9 +70,11 @@ if __name__ == "__main__":
             resized_image = original_image.resize((RESIZED_W, RESIZED_H), Image.BILINEAR)
             image = np.array(resized_image).transpose(2, 0, 1) / 255.0
             image = torch.tensor(image, dtype=torch.bfloat16).unsqueeze(0).to("cuda")
-            indices, codes = encoder.encode(image)
+            with torch.no_grad():
+                indices, codes = encoder.encode(image)
             indices_len = indices.shape[-2] * indices.shape[-1]
-            reconstructed_tensor = decoder.decode(indices)
+            with torch.no_grad():
+                reconstructed_tensor = decoder.decode(indices)
             reconstructed_image = reconstructed_tensor.to(torch.float32).squeeze(0).cpu().numpy()
             reconstructed_image = np.clip(reconstructed_image, 0, 1)
             reconstructed_image = (reconstructed_image * 255).astype(np.uint8).transpose(1, 2, 0)
