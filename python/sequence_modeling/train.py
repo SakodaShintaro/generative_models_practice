@@ -100,8 +100,9 @@ def train_epoch(
     model.train()
     device = next(model.parameters()).device
     total_loss = 0
+    total_num = 0
 
-    for batch_idx, data in enumerate(tqdm(dataloader, desc="Training")):
+    for batch_idx, data in enumerate(dataloader):
         # [batch_size, seq_len].
         data = data.to(device)
 
@@ -117,9 +118,10 @@ def train_epoch(
         optimizer.step()
 
         total_loss += loss.item()
+        total_num += len(data)
 
-        if batch_idx % 100 == 0:
-            print(f"Batch {batch_idx}, Loss: {loss.item():.4f}")
+        if batch_idx % 1 == 0:
+            print(f"{total_num=:06d}/{len(dataloader.dataset)}, {loss.item()=:.4f}", end="\r")
 
     return total_loss / len(dataloader)
 
