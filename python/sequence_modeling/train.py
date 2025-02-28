@@ -98,9 +98,9 @@ def train_epoch(
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
-    device: torch.device,
 ) -> float:
     model.train()
+    device = model.parameters().__next__().device
     total_loss = 0
 
     for batch_idx, data in enumerate(tqdm(dataloader, desc="Training")):
@@ -175,7 +175,7 @@ def generate_sequence(
     generate_len: int,
 ) -> torch.Tensor:
     model.eval()
-    device = model.device
+    device = model.parameters().__next__().device
     with torch.no_grad():
         current_seq = start_tokens.clone().to(device)
         for _ in range(generate_len):
@@ -235,7 +235,7 @@ if __name__ == "__main__":
         print(f"Epoch {epoch + 1}/{args.epochs}")
 
         # 学習
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion)
 
         # 検証
         val_loss = validate(model, valid_loader, criterion, device)
