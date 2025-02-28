@@ -7,7 +7,7 @@ import torch
 
 
 class Wayve101TokensDataset(torch.utils.data.Dataset):
-    def __init__(self, data_dir: Path, scene_low: int, scene_high: int, seq_len: int = 8) -> None:
+    def __init__(self, data_dir: Path, scene_low: int, scene_high: int, frame_len: int = 8) -> None:
         self.data_dir = data_dir
         subdir_list = sorted(data_dir.glob("scene_*"))
         filtered_subdir_list = []
@@ -26,11 +26,11 @@ class Wayve101TokensDataset(torch.utils.data.Dataset):
             )
             tokens_path_list = tokens_path_list[:max_len]
             self.path_list.append(tokens_path_list)
-        self.seq_len = seq_len
-        self.len_per_subdir = len(self.path_list[0]) - (self.seq_len - 1)
+        self.frame_len = frame_len
+        self.len_per_subdir = len(self.path_list[0]) - (self.frame_len - 1)
         for i, subdir_path_list in enumerate(self.path_list):
-            assert len(subdir_path_list) - (self.seq_len - 1) == self.len_per_subdir, (
-                f"{i=}, {len(subdir_path_list)=}, {self.seq_len=}, {self.len_per_subdir=}"
+            assert len(subdir_path_list) - (self.frame_len - 1) == self.len_per_subdir, (
+                f"{i=}, {len(subdir_path_list)=}, {self.frame_len=}, {self.len_per_subdir=}"
             )
 
     def __len__(self) -> int:
@@ -42,8 +42,8 @@ class Wayve101TokensDataset(torch.utils.data.Dataset):
 
         path_list = self.path_list[subdir_idx]
         tokens_list = []
-        for i in range(self.seq_len):
+        for i in range(self.frame_len):
             tokens = np.loadtxt(path_list[base_idx + i], delimiter=",", dtype=np.int32)
             tokens_list.extend(tokens)
         tokens_list = np.stack(tokens_list, axis=0)
-        return torch.from_numpy(tokens_list)
+        return torch.from_numpy(tokens_list)  # [frame_len * num_tokens_per_frame]

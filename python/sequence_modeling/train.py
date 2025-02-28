@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
-    parser.add_argument("--seq_len", type=int, default=8, help="Sequence length for the dataset")
+    parser.add_argument("--frame_len", type=int, default=8)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
 
@@ -178,13 +178,13 @@ if __name__ == "__main__":
         args.data_dir,
         scene_low=1,
         scene_high=90,
-        seq_len=args.seq_len,
+        frame_len=args.frame_len,
     )
     valid_dataset = Wayve101TokensDataset(
         args.data_dir,
         scene_low=91,
         scene_high=101,
-        seq_len=args.seq_len,
+        frame_len=args.frame_len,
     )
 
     # データローダー作成
