@@ -104,17 +104,13 @@ def train_epoch(
     total_loss = 0
 
     for batch_idx, data in enumerate(tqdm(dataloader, desc="Training")):
-        # トークンシーケンス [batch_size, seq_len, token_dim].
+        # トークンシーケンス [batch_size, seq_len].
         data = data.to(device)
-        batch_size, seq_len, token_dim = data.shape
-
-        # トークンをフラット化 [batch_size, seq_len, token_dim] -> [batch_size, seq_len * token_dim]
-        flattened_data = data.reshape(batch_size, seq_len * token_dim)
 
         # 入力は最後のトークンを除いたシーケンス
-        src = flattened_data[:, :-1].long()
+        src = data[:, :-1].long()
         # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
-        tgt = flattened_data[:, 1:].long()
+        tgt = data[:, 1:].long()
 
         # モデル予測
         optimizer.zero_grad()
@@ -147,17 +143,13 @@ def validate(
 
     with torch.no_grad():
         for data in tqdm(dataloader, desc="Validation"):
-            # トークンシーケンス [batch_size, seq_len, token_dim].
+            # トークンシーケンス [batch_size, seq_len].
             data = data.to(device)
-            batch_size, seq_len, token_dim = data.shape
-
-            # トークンをフラット化
-            flattened_data = data.reshape(batch_size, seq_len * token_dim)
 
             # 入力は最後のトークンを除いたシーケンス
-            src = flattened_data[:, :-1].long()
+            src = data[:, :-1].long()
             # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
-            tgt = flattened_data[:, 1:].long()
+            tgt = data[:, 1:].long()
 
             # モデル予測
             output = model(src)
@@ -208,11 +200,6 @@ if __name__ == "__main__":
     # データローダー作成
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
-
-    # トークンの次元を取得
-    sample = train_dataset[0]
-    print(f"{sample.shape=}")
-    _, token_dim = sample.shape
 
     # モデルの初期化
     model = TransformerModel(

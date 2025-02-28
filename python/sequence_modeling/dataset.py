@@ -44,6 +44,6 @@ class Wayve101TokensDataset(torch.utils.data.Dataset):
         tokens_list = []
         for i in range(self.seq_len):
             tokens = np.loadtxt(path_list[base_idx + i], delimiter=",", dtype=np.int32)
-            tokens_list.append(tokens)
+            tokens_list.extend(tokens)
         tokens_list = np.stack(tokens_list, axis=0)
         return torch.from_numpy(tokens_list)
