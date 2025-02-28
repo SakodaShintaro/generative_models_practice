@@ -140,9 +140,9 @@ def validate(
     model: nn.Module,
     dataloader: DataLoader,
     criterion: nn.Module,
-    device: torch.device,
 ) -> float:
     model.eval()
+    device = model.parameters().__next__().device
     total_loss = 0
 
     with torch.no_grad():
