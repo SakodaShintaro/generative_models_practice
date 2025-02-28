@@ -83,29 +83,19 @@ class TransformerModel(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        src_mask: torch.Tensor | None = None,
-        src_key_padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # src: [batch_size, seq_len].
         src = self.embedding(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
 
         # エンコーダー通過
-        memory = self.transformer_encoder(
-            src,
-            mask=src_mask,
-            src_key_padding_mask=src_key_padding_mask,
-        )
+        seq_len = src.size(1)
+        mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
+        memory = self.transformer_encoder(src, mask=mask)
 
         # 予測
         output = self.fc_out(memory)
         return output
-
-
-def create_masks(seq_len: int, device: torch.device) -> torch.Tensor:
-    # 自己回帰マスク (future tokens are masked)
-    mask = torch.triu(torch.ones(seq_len, seq_len, device=device) * float("-inf"), diagonal=1)
-    return mask
 
 
 def train_epoch(
@@ -131,12 +121,9 @@ def train_epoch(
         # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
         tgt = flattened_data[:, 1:].long()
 
-        # マスクを作成
-        src_mask = create_masks(src.size(1), device)
-
         # モデル予測
         optimizer.zero_grad()
-        output = model(src, src_mask=src_mask)
+        output = model(src)
 
         # ロス計算
         loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
@@ -177,11 +164,8 @@ def validate(
             # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
             tgt = flattened_data[:, 1:].long()
 
-            # マスクを作成
-            src_mask = create_masks(src.size(1), device)
-
             # モデル予測
-            output = model(src, src_mask=src_mask)
+            output = model(src)
 
             # ロス計算
             loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
@@ -202,11 +186,8 @@ def generate_sequence(
         current_seq = start_tokens.clone().to(device)
 
         for _ in range(max_len):
-            # マスクを作成
-            mask = create_masks(current_seq.size(1), device)
-
             # 次のトークンを予測
-            output = model(current_seq, src_mask=mask)
+            output = model(current_seq)
             next_token_logits = output[:, -1, :]
 
             # 次のトークンを取得
