@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
     parser.add_argument("--seq_len", type=int, default=8, help="Sequence length for the dataset")
-    parser.add_argument("--d_model", type=int, default=512, help="Model dimension")
+    parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
 
     return parser.parse_args()
@@ -47,10 +47,9 @@ class PositionalEncoding(nn.Module):
 class TransformerModel(nn.Module):
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int,
         nhead: int = 8,
         num_encoder_layers: int = 6,
-        dim_feedforward: int = 2048,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
@@ -64,7 +63,7 @@ class TransformerModel(nn.Module):
         encoder_layers = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
-            dim_feedforward=dim_feedforward,
+            dim_feedforward=d_model * 4,
             dropout=dropout,
             batch_first=True,
         )
