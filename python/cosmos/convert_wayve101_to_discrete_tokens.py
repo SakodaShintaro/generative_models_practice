@@ -1,4 +1,4 @@
-"""A script to convert wayve101 dataset to discrete tokens using a pretrained Cosmos tokenizer."""  # noqa: INP001
+"""A script to convert wayve101 dataset to discrete tokens using a pretrained Cosmos tokenizer."""
 
 import argparse
 from pathlib import Path
