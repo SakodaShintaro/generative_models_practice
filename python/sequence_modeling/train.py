@@ -215,7 +215,7 @@ if __name__ == "__main__":
         train_loss = train_epoch(model, train_loader, optimizer, criterion)
 
         # 検証
-        val_loss = validate(model, valid_loader, criterion, device)
+        val_loss = validate(model, valid_loader, criterion)
 
         print(f"Epoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
