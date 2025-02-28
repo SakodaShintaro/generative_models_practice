@@ -81,7 +81,7 @@ class TransformerModel(nn.Module):
         self.fc_out.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # src: [batch_size, seq_len].
+        # x: [batch_size, seq_len].
         seq_len = x.size(1)
         x = self.embedding(x) * math.sqrt(self.d_model)
         x = self.pos_encoder(x)
@@ -104,23 +104,17 @@ def train_epoch(
     total_loss = 0
 
     for batch_idx, data in enumerate(tqdm(dataloader, desc="Training")):
-        # トークンシーケンス [batch_size, seq_len].
+        # [batch_size, seq_len].
         data = data.to(device)
 
-        # 入力は最後のトークンを除いたシーケンス
         src = data[:, :-1].long()
-        # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
         tgt = data[:, 1:].long()
 
-        # モデル予測
         optimizer.zero_grad()
         output = model(src)
 
-        # ロス計算
         loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
         loss.backward()
-
-        # 勾配クリッピング
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
 
@@ -143,18 +137,14 @@ def validate(
 
     with torch.no_grad():
         for data in tqdm(dataloader, desc="Validation"):
-            # トークンシーケンス [batch_size, seq_len].
+            # [batch_size, seq_len].
             data = data.to(device)
 
-            # 入力は最後のトークンを除いたシーケンス
             src = data[:, :-1].long()
-            # ターゲットは最初のトークンを除いたシーケンス（次のトークンを予測）
             tgt = data[:, 1:].long()
 
-            # モデル予測
             output = model(src)
 
-            # ロス計算
             loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
             total_loss += loss.item()
 
