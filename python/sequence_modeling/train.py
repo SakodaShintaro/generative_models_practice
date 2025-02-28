@@ -80,22 +80,17 @@ class TransformerModel(nn.Module):
         self.fc_out.bias.data.zero_()
         self.fc_out.weight.data.uniform_(-initrange, initrange)
 
-    def forward(
-        self,
-        src: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # src: [batch_size, seq_len].
-        src = self.embedding(src) * math.sqrt(self.d_model)
-        src = self.pos_encoder(src)
-
-        # エンコーダー通過
-        seq_len = src.size(1)
-        mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
-        memory = self.transformer_encoder(src, mask=mask)
-
-        # 予測
-        output = self.fc_out(memory)
-        return output
+        seq_len = x.size(1)
+        x = self.embedding(x) * math.sqrt(self.d_model)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(
+            x,
+            mask=nn.Transformer.generate_square_subsequent_mask(seq_len).to(device),
+        )
+        x = self.fc_out(x)
+        return x
 
 
 def train_epoch(
