@@ -1,5 +1,3 @@
-"""Wayve101トークンデータセットを使ったTransformerモデルの学習"""
-
 import argparse
 import math
 from pathlib import Path
@@ -14,15 +12,14 @@ VOCAB_SIZE = 64_000
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train Transformer model on Wayve101 tokens")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, required=True)
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--frame_len", type=int, default=8)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
-
     return parser.parse_args()
 
 
@@ -83,6 +80,7 @@ class TransformerModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [batch_size, seq_len].
         seq_len = x.size(1)
+        device = x.device
         x = self.embedding(x) * math.sqrt(self.d_model)
         x = self.pos_encoder(x)
         x = self.transformer_encoder(
@@ -100,7 +98,7 @@ def train_epoch(
     criterion: nn.Module,
 ) -> float:
     model.train()
-    device = model.parameters().__next__().device
+    device = next(model.parameters()).device
     total_loss = 0
 
     for batch_idx, data in enumerate(tqdm(dataloader, desc="Training")):
@@ -132,7 +130,7 @@ def validate(
     criterion: nn.Module,
 ) -> float:
     model.eval()
-    device = model.parameters().__next__().device
+    device = next(model.parameters()).device
     total_loss = 0
 
     with torch.no_grad():
@@ -157,7 +155,7 @@ def generate_sequence(
     generate_len: int,
 ) -> torch.Tensor:
     model.eval()
-    device = model.parameters().__next__().device
+    device = next(model.parameters()).device
     with torch.no_grad():
         current_seq = start_tokens.clone().to(device)
         for _ in range(generate_len):
@@ -170,8 +168,18 @@ def generate_sequence(
 
 if __name__ == "__main__":
     args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+
+    # GPUの設定
+    assert torch.cuda.is_available(), "GPU is not available"
+    use_data_parallel = True
+    if use_data_parallel:
+        available_gpu_count = torch.cuda.device_count()
+        gpu_ids = list(range(available_gpu_count))
+        device = torch.device(f"cuda:{gpu_ids[0]}")
+        print(f"Using DataParallel on GPUs: {gpu_ids}")
+    else:
+        device = torch.device("cuda")
+        print(f"Using single GPU: {torch.cuda.get_device_name(0)}")
 
     # データセット読み込み
     train_dataset = Wayve101TokensDataset(
@@ -198,6 +206,15 @@ if __name__ == "__main__":
         num_encoder_layers=3,
     ).to(device)
 
+    # DataParallelの適用
+    if use_data_parallel:
+        gpu_ids = list(range(torch.cuda.device_count()))
+        model = nn.DataParallel(model, device_ids=gpu_ids)
+        print(f"Model wrapped with DataParallel on {len(gpu_ids)} GPUs")
+
+        # DataParallelを使用する場合、バッチサイズを調整することで効率が向上
+        print(f"Effective batch size: {args.batch_size * len(gpu_ids)}")
+
     # 最適化器とロス関数
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
@@ -222,10 +239,12 @@ if __name__ == "__main__":
         # モデル保存（検証ロスが改善した場合）
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            # DataParallelを使用している場合は .module にアクセスしてモデルを保存
+            model_to_save = model.module if hasattr(model, "module") else model
             torch.save(
                 {
                     "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
+                    "model_state_dict": model_to_save.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "train_loss": train_loss,
                     "val_loss": val_loss,
@@ -235,10 +254,12 @@ if __name__ == "__main__":
 
         # 定期的に保存
         if (epoch + 1) % 5 == 0:
+            # DataParallelを使用している場合は .module にアクセスしてモデルを保存
+            model_to_save = model.module if hasattr(model, "module") else model
             torch.save(
                 {
                     "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
+                    "model_state_dict": model_to_save.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "train_loss": train_loss,
                     "val_loss": val_loss,
