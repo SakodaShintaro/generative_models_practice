@@ -57,14 +57,18 @@ if __name__ == "__main__":
         iamge_path_list = sorted((data_dir / subdir / "images" / TARGET_SUBDIR).glob("*.jpeg"))
         curr_tokens_result_dir = result_dir / subdir.name / "tokens" / TARGET_SUBDIR
         curr_tokens_result_dir.mkdir(exist_ok=True, parents=True)
-        curr_reconstruct_result_dir = result_dir / subdir.name / "reconstruct" / TARGET_SUBDIR
-        curr_reconstruct_result_dir.mkdir(exist_ok=True, parents=True)
+        curr_resized_result_dir = result_dir / subdir.name / "resized" / TARGET_SUBDIR
+        curr_resized_result_dir.mkdir(exist_ok=True, parents=True)
+        curr_reconstructed_result_dir = result_dir / subdir.name / "reconstructed" / TARGET_SUBDIR
+        curr_reconstructed_result_dir.mkdir(exist_ok=True, parents=True)
+        curr_comparison_result_dir = result_dir / subdir.name / "comparison" / TARGET_SUBDIR
+        curr_comparison_result_dir.mkdir(exist_ok=True, parents=True)
         for image_path in iamge_path_list:
             original_image = Image.open(image_path).convert("RGB")
             ORIGINAL_H = 1080  # 16の倍数ではない
             ORIGINAL_W = 1920  # 16 * 120
-            RESIZED_H = 128
-            RESIZED_W = 256
+            RESIZED_H = 64
+            RESIZED_W = 128
             assert RESIZED_H % COMPRESS_SCALE == 0
             assert RESIZED_W % COMPRESS_SCALE == 0
             resized_image = original_image.resize((RESIZED_W, RESIZED_H), Image.BILINEAR)
@@ -79,13 +83,21 @@ if __name__ == "__main__":
             reconstructed_image = np.clip(reconstructed_image, 0, 1)
             reconstructed_image = (reconstructed_image * 255).astype(np.uint8).transpose(1, 2, 0)
             reconstructed_image = Image.fromarray(reconstructed_image)
+
+            resized_path = curr_resized_result_dir / f"{image_path.stem}.jpeg"
+            resized_image.save(resized_path)
+
+            reconstructed_path = curr_reconstructed_result_dir / f"{image_path.stem}.jpeg"
+            reconstructed_image.save(reconstructed_path)
+
             resized_image = add_text_to_image(resized_image, "Original Image")
             reconstructed_image = add_text_to_image(reconstructed_image, "Reconstructed Image")
             comparison_image = Image.new("RGB", (resized_image.width * 2, resized_image.height))
             comparison_image.paste(resized_image, (0, 0))
             comparison_image.paste(reconstructed_image, (resized_image.width, 0))
-            reconstruct_path = curr_reconstruct_result_dir / f"{image_path.stem}.jpeg"
-            comparison_image.save(reconstruct_path)
+            comparison_path = curr_comparison_result_dir / f"{image_path.stem}.jpeg"
+            comparison_image.save(comparison_path)
+
             indices_path = curr_tokens_result_dir / f"{image_path.stem}.csv"
             indices = indices.cpu().numpy().flatten().reshape(1, -1)
             np.savetxt(indices_path, indices, delimiter=",", fmt="%d")
