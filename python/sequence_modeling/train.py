@@ -172,25 +172,17 @@ def validate(
 def generate_sequence(
     model: nn.Module,
     start_tokens: torch.Tensor,
-    max_len: int,
-    device: torch.device,
+    generate_len: int,
 ) -> torch.Tensor:
     model.eval()
-
+    device = model.device
     with torch.no_grad():
         current_seq = start_tokens.clone().to(device)
-
-        for _ in range(max_len):
-            # 次のトークンを予測
+        for _ in range(generate_len):
             output = model(current_seq)
             next_token_logits = output[:, -1, :]
-
-            # 次のトークンを取得
             next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-            # シーケンスに追加
             current_seq = torch.cat([current_seq, next_token], dim=1)
-
     return current_seq
 
 
