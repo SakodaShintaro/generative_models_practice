@@ -14,7 +14,7 @@ VOCAB_SIZE = 64_000
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, required=True)
-    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--frame_len", type=int, default=8)
@@ -121,7 +121,11 @@ def train_epoch(
         total_num += len(data)
 
         if batch_idx % 1 == 0:
-            print(f"{total_num=:06d}/{len(dataloader.dataset)}, {loss.item()=:.4f}", end="\r")
+            progress = 100.0 * batch_idx / len(dataloader)
+            print(
+                f"{total_num=:06d}/{len(dataloader.dataset)}({progress:5.1f}%), {loss.item()=:.4f}",
+                end="\r",
+            )
 
     return total_loss / len(dataloader)
 
@@ -213,9 +217,6 @@ if __name__ == "__main__":
         gpu_ids = list(range(torch.cuda.device_count()))
         model = nn.DataParallel(model, device_ids=gpu_ids)
         print(f"Model wrapped with DataParallel on {len(gpu_ids)} GPUs")
-
-        # DataParallelを使用する場合、バッチサイズを調整することで効率が向上
-        print(f"Effective batch size: {args.batch_size * len(gpu_ids)}")
 
     # 最適化器とロス関数
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
