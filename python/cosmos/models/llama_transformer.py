@@ -8,8 +8,6 @@ from torch import nn
 
 from .config import ModelArgs
 
-MULTIPLE_OF = 256
-
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int) -> None:
@@ -26,16 +24,9 @@ class RMSNorm(torch.nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        hidden_dim: int,
-        multiple_of: int,
-    ) -> None:
+    def __init__(self, dim: int) -> None:
         super().__init__()
-        hidden_dim = int(2 * hidden_dim / 3)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-
+        hidden_dim = dim * 4
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
@@ -51,11 +42,7 @@ class TransformerBlock(nn.Module):
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
         self.attention = Attention(args)
-        self.feed_forward = FeedForward(
-            dim=args.dim,
-            hidden_dim=4 * args.dim,
-            multiple_of=MULTIPLE_OF,
-        )
+        self.feed_forward = FeedForward(dim=args.dim)
         self.attention_norm = RMSNorm(args.dim)
         self.ffn_norm = RMSNorm(args.dim)
 
@@ -185,8 +172,8 @@ class LlamaTransformer(nn.Module):
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         _, seq_len = tokens.shape
         h = self.tok_embeddings(tokens)
-        cos = self.cos_cached[:, :seq_len].to(h.dtype)
-        sin = self.sin_cached[:, :seq_len].to(h.dtype)
+        cos = self.cos_cached[:, :seq_len].to(h.dtype).to(h.device)
+        sin = self.sin_cached[:, :seq_len].to(h.dtype).to(h.device)
 
         mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
         mask = torch.triu(mask, diagonal=1).type_as(h)

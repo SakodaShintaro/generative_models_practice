@@ -147,7 +147,7 @@ if __name__ == "__main__":
         vocab_size=VOCAB_SIZE,
         max_seq_length=args.frame_len * 128,  # multiply `num_tokens_per_frame`
     )
-    model_name = "vanilla"
+    model_name = "llama"
     match model_name:
         case "llama":
             model = LlamaTransformer(params).to(device)
