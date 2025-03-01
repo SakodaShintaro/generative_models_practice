@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_dir", type=Path, required=True)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=0.0001)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--frame_len", type=int, default=8)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
@@ -46,8 +46,6 @@ class TransformerModel(nn.Module):
         self,
         d_model: int,
         nhead: int = 8,
-        num_encoder_layers: int = 6,
-        dropout: float = 0.1,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -61,10 +59,10 @@ class TransformerModel(nn.Module):
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=d_model * 4,
-            dropout=dropout,
+            dropout=0.0,
             batch_first=True,
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_encoder_layers)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=3)
 
         # 予測ヘッド
         self.fc_out = nn.Linear(d_model, VOCAB_SIZE)
@@ -209,7 +207,6 @@ if __name__ == "__main__":
     model = TransformerModel(
         d_model=args.d_model,
         nhead=8,
-        num_encoder_layers=3,
     ).to(device)
 
     # DataParallelの適用
