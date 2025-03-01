@@ -4,8 +4,9 @@ import math
 
 import torch
 import torch.nn.functional as F
-from config import ModelArgs
 from torch import nn
+
+from .config import ModelArgs
 
 MULTIPLE_OF = 256
 

@@ -1,8 +1,9 @@
 import math
 
 import torch
-from config import ModelArgs
 from torch import nn
+
+from .config import ModelArgs
 
 
 class PositionalEncoding(nn.Module):

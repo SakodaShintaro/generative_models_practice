@@ -145,7 +145,7 @@ if __name__ == "__main__":
         n_layers=3,
         n_heads=8,
         vocab_size=VOCAB_SIZE,
-        max_seq_length=args.frame_len * 128,
+        max_seq_length=args.frame_len * 128,  # multiply `num_tokens_per_frame`
     )
     model_name = "vanilla"
     match model_name:
