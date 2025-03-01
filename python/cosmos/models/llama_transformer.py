@@ -1,49 +1,13 @@
 # ref. https://github.com/zphang/minimal-llama/blob/main/minimal_llama/model.py
 
 import math
-from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
+from config import ModelArgs
 from torch import nn
 
 MULTIPLE_OF = 256
-
-
-@dataclass
-class ModelArgs:
-    dim: int = 4096
-    n_layers: int = 32
-    n_heads: int = 32
-    vocab_size: int = 32000
-    norm_eps: float = 1e-6
-    max_seq_length: int = 2048
-
-
-DEBUG_CONFIG = ModelArgs(
-    dim=32,
-    n_layers=10,
-    n_heads=4,
-    vocab_size=32000,
-)
-LLAMA_7B_CONFIG = ModelArgs(
-    dim=4096,
-    n_layers=32,
-    n_heads=32,
-    vocab_size=32000,
-)
-LLAMA_13B_CONFIG = ModelArgs(
-    dim=5120,
-    n_layers=40,
-    n_heads=40,
-    vocab_size=32000,
-)
-
-LLAMA_CONFIG_DICT = {
-    "7B": LLAMA_7B_CONFIG,
-    "13B": LLAMA_13B_CONFIG,
-    "debug": DEBUG_CONFIG,
-}
 
 
 class RMSNorm(torch.nn.Module):
@@ -199,7 +163,6 @@ def precompute_cos_sin(
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs) -> None:
         super().__init__()
-        self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
@@ -212,8 +175,8 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
         self.cos_cached, self.sin_cached = precompute_cos_sin(
-            self.params.max_seq_length,
-            self.params.dim // self.params.n_heads,
+            params.max_seq_length,
+            params.dim // params.n_heads,
             dtype=self.tok_embeddings.weight.dtype,
             device=self.tok_embeddings.weight.device,
         )
