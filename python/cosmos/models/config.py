@@ -7,7 +7,7 @@ class ModelArgs:
     n_layers: int = 32
     n_heads: int = 3
     vocab_size: int = 32000
-    max_seq_length: int = 2048
+    max_seq_length: int = 5000
 
 
 DEBUG_CONFIG = ModelArgs(

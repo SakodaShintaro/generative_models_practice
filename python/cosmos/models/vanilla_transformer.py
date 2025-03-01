@@ -6,7 +6,7 @@ from torch import nn
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 5000) -> None:
+    def __init__(self, d_model: int, max_len: int) -> None:
         super().__init__()
         # 位置エンコーディングの計算
         pe = torch.zeros(max_len, d_model)
@@ -30,7 +30,7 @@ class VanillaTransformerModel(nn.Module):
 
         # トークン埋め込み層
         self.embedding = nn.Embedding(params.vocab_size, params.dim)
-        self.pos_encoder = PositionalEncoding(params.dim)
+        self.pos_encoder = PositionalEncoding(params.dim, params.max_seq_length)
 
         # Transformerエンコーダー
         encoder_layers = nn.TransformerEncoderLayer(
