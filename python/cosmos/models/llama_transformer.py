@@ -11,9 +11,9 @@ MULTIPLE_OF = 256
 
 
 class RMSNorm(torch.nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+    def __init__(self, dim: int) -> None:
         super().__init__()
-        self.eps = eps
+        self.eps = 1e-6
         self.weight = nn.Parameter(torch.ones(dim))
 
     def _norm(self, x: torch.Tensor) -> torch.Tensor:
@@ -55,8 +55,8 @@ class TransformerBlock(nn.Module):
             hidden_dim=4 * args.dim,
             multiple_of=MULTIPLE_OF,
         )
-        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
-        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.attention_norm = RMSNorm(args.dim)
+        self.ffn_norm = RMSNorm(args.dim)
 
     def forward(
         self,
@@ -160,7 +160,7 @@ def precompute_cos_sin(
     return cos_cached, sin_cached
 
 
-class Transformer(nn.Module):
+class LlamaTransformer(nn.Module):
     def __init__(self, params: ModelArgs) -> None:
         super().__init__()
         self.vocab_size = params.vocab_size
@@ -172,7 +172,7 @@ class Transformer(nn.Module):
         for _ in range(params.n_layers):
             self.layers.append(TransformerBlock(params))
 
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.norm = RMSNorm(params.dim)
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
         self.cos_cached, self.sin_cached = precompute_cos_sin(
             params.max_seq_length,

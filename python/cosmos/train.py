@@ -1,10 +1,12 @@
 import argparse
-import math
 from pathlib import Path
 
 import torch
 import wandb
 from dataset import Wayve101TokensDataset
+from models.config import ModelArgs
+from models.llama_transformer import LlamaTransformer
+from models.vanilla_transformer import VanillaTransformerModel
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -18,75 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--frame_len", type=int, default=8)
-    parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
     return parser.parse_args()
-
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 5000) -> None:
-        super().__init__()
-        # 位置エンコーディングの計算
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer("pe", pe)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [batch_size, seq_len, embedding_dim].
-        x = x + self.pe[:, : x.size(1), :]
-        return x
-
-
-class TransformerModel(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        nhead: int = 8,
-    ) -> None:
-        super().__init__()
-        self.d_model = d_model
-
-        # トークン埋め込み層
-        self.embedding = nn.Embedding(VOCAB_SIZE, d_model)
-        self.pos_encoder = PositionalEncoding(d_model)
-
-        # Transformerエンコーダー
-        encoder_layers = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=d_model * 4,
-            dropout=0.0,
-            batch_first=True,
-        )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=3)
-
-        # 予測ヘッド
-        self.fc_out = nn.Linear(d_model, VOCAB_SIZE)
-
-        self.init_weights()
-
-    def init_weights(self) -> None:
-        initrange = 0.1
-        self.embedding.weight.data.uniform_(-initrange, initrange)
-        self.fc_out.bias.data.zero_()
-        self.fc_out.weight.data.uniform_(-initrange, initrange)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [batch_size, seq_len].
-        seq_len = x.size(1)
-        device = x.device
-        x = self.embedding(x) * math.sqrt(self.d_model)
-        x = self.pos_encoder(x)
-        x = self.transformer_encoder(
-            x,
-            mask=nn.Transformer.generate_square_subsequent_mask(seq_len).to(device),
-        )
-        x = self.fc_out(x)
-        return x
 
 
 def train_epoch(
@@ -205,10 +140,19 @@ if __name__ == "__main__":
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
 
     # モデルの初期化
-    model = TransformerModel(
-        d_model=args.d_model,
-        nhead=8,
-    ).to(device)
+    params = ModelArgs(
+        dim=256,
+        n_layers=3,
+        n_heads=8,
+        vocab_size=VOCAB_SIZE,
+        max_seq_length=args.frame_len * 128,
+    )
+    model_name = "vanilla"
+    match model_name:
+        case "llama":
+            model = LlamaTransformer(params).to(device)
+        case "vanilla":
+            model = VanillaTransformerModel(params).to(device)
 
     # DataParallelの適用
     if use_data_parallel:

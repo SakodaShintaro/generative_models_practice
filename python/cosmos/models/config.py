@@ -3,11 +3,10 @@ from dataclasses import dataclass
 
 @dataclass
 class ModelArgs:
-    dim: int = 4096
+    dim: int = 256
     n_layers: int = 32
-    n_heads: int = 32
+    n_heads: int = 3
     vocab_size: int = 32000
-    norm_eps: float = 1e-6
     max_seq_length: int = 2048
 
 
