@@ -226,12 +226,7 @@ if __name__ == "__main__":
     best_val_loss = float("inf")
 
     for epoch in range(args.epochs):
-        print(f"Epoch {epoch + 1}/{args.epochs}")
-
-        # 学習
         train_loss = train_epoch(model, train_loader, optimizer, criterion)
-
-        # 検証
         valid_loss = validate(model, valid_loader, criterion)
 
         print(f"Epoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {valid_loss:.4f}")
