@@ -3,10 +3,10 @@ import math
 from pathlib import Path
 
 import torch
+import wandb
 from dataset import Wayve101TokensDataset
 from torch import nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 VOCAB_SIZE = 64_000
 
@@ -118,12 +118,12 @@ def train_epoch(
         total_loss += loss.item()
         total_num += len(data)
 
-        if batch_idx % 1 == 0:
-            progress = 100.0 * batch_idx / len(dataloader)
-            print(
-                f"{total_num=:06d}/{len(dataloader.dataset)}({progress:5.1f}%), {loss.item()=:.4f}",
-                end="\r",
-            )
+        progress = 100.0 * batch_idx / len(dataloader)
+        print(
+            f"{total_num=:06d}/{len(dataloader.dataset)}({progress:5.1f}%), {loss.item()=:.4f}",
+            end="\r",
+        )
+        wandb.log({"train_loss": loss.item()})
 
     return total_loss / len(dataloader)
 
@@ -138,7 +138,7 @@ def validate(
     total_loss = 0
 
     with torch.no_grad():
-        for data in tqdm(dataloader, desc="Validation"):
+        for data in dataloader:
             # [batch_size, seq_len].
             data = data.to(device)
 
@@ -172,6 +172,7 @@ def generate_sequence(
 
 if __name__ == "__main__":
     args = parse_args()
+    wandb.init(project="Wayve101_Sequential_Modeling", config=vars(args))
 
     # GPUの設定
     assert torch.cuda.is_available(), "GPU is not available"
@@ -229,6 +230,7 @@ if __name__ == "__main__":
         train_loss = train_epoch(model, train_loader, optimizer, criterion)
         valid_loss = validate(model, valid_loader, criterion)
 
+        wandb.log({"epoch": epoch, "valid_loss": valid_loss})
         print(f"Epoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {valid_loss:.4f}")
 
         # モデル保存（検証ロスが改善した場合）
