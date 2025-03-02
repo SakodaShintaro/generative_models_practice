@@ -12,10 +12,27 @@ from .llama_transformer import apply_rotary_pos_emb
 # ref. https://goombalab.github.io/blog/2024/mamba2-part3-algorithm/
 def segsum(x: torch.Tensor) -> torch.Tensor:
     """Naive segment sum calculation. exp(segsum(A)) produces a 1-SS matrix,
-    which is equivalent to a scalar SSM."""
+    which is equivalent to a scalar SSM.
+        x = [a, b, c, d]
+        x_cumsum = [a, a+b, a+b+c, a+b+c+d]
+        x_segsum(before masking) = [
+            [  a-a,    a-(a+b),     a-(a+b+c),     a-(a+b+c+d)     ]
+            [  a+b-a,  a+b-(a+b),   a+b-(a+b+c),   a+b-(a+b+c+d)   ]
+            [  a+b+c-a, a+b+c-(a+b), a+b+c-(a+b+c), a+b+c-(a+b+c+d) ]
+            [  a+b+c+d-a, ...                                       ]
+        ]
+        x_segsum(after masking) = [
+            [  0,    -inf,   -inf,   -inf  ]
+            [  a+b-a,  0,   -inf,   -inf   ]
+            [  a+b+c-a, a+b+c-(a+b), 0, -inf ]
+            [  a+b+c+d-a, ...                ]
+        ]
+    """
     T = x.size(-1)
     x_cumsum = torch.cumsum(x, dim=-1)
-    x_segsum = x_cumsum[..., :, None] - x_cumsum[..., None, :]
+    x_cumsum_v = x_cumsum[..., :, None]  # (..., T, 1)
+    x_cumsum_h = x_cumsum[..., None, :]  # (..., 1, T)
+    x_segsum = x_cumsum_v - x_cumsum_h  # (..., T, T)
     mask = torch.tril(torch.ones(T, T, device=x.device, dtype=bool), diagonal=0)
     x_segsum = x_segsum.masked_fill(~mask, -torch.inf)
     return x_segsum
