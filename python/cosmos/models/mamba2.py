@@ -92,6 +92,55 @@ def ssd(
     return Y, final_state
 
 
+def simple_matrix(
+    X: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Arguments:
+        X: (batch, length, n_heads, d_head)
+        A: (batch, length, n_heads)
+        B: (batch, length, n_heads, d_state)
+        C: (batch, length, n_heads, d_state)
+    Return:
+        Y: (batch, length, n_heads, d_head)
+    """
+    assert X.dtype == A.dtype == B.dtype == C.dtype
+    A = rearrange(A, "b l h -> b h l")
+    A_cumsum = torch.cumsum(A, dim=-1)
+    L = torch.exp(segsum(A))
+    Y = torch.einsum("blhn,bshn,bhls,bshp->blhp", C, B, L, X)
+    decay_states = torch.exp(A_cumsum[:, :, -1:] - A_cumsum)
+    states = torch.einsum("blhn,bhl,blhp->bhpn", B, decay_states, X)
+    return Y, states[:, -1]
+
+
+def simple_recurrsive(
+    X: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Arguments:
+        X: (batch, length, n_heads, d_head)
+        A: (batch, length, n_heads)
+        B: (batch, length, n_heads, d_state)
+        C: (batch, length, n_heads, d_state)
+    Return:
+        Y: (batch, length, n_heads, d_head)
+    """
+    assert X.dtype == A.dtype == B.dtype == C.dtype
+    b, l, h, d = X.shape
+    state = torch.zeros(b, h, d, device=X.device, dtype=X.dtype)
+    for i in range(l):
+        state = state * torch.exp(A[:, i : i + 1, :, None]) + B[:, i, :, :] @ X[:, i, :, :]
+    Y = C @ state
+    return Y, state
+
+
 class MambaBlock(nn.Module):
     def __init__(self, args: ModelArgs) -> None:
         super().__init__()
@@ -111,12 +160,12 @@ class MambaBlock(nn.Module):
         self.A_log = nn.Parameter(torch.empty(args.n_heads))
         self.w_dt = nn.Linear(dim, args.n_heads, bias=True)
 
-    def forward(
+    def prepare_values(
         self,
         x: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple:
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
@@ -143,11 +192,33 @@ class MambaBlock(nn.Module):
         A = A * dt
         A = A.squeeze(-1)
         print(f"{X.shape=}, {A.shape=}, {B.shape=}, {C.shape=}, {dt.shape=}")
+        return X, A, B, C
 
-        y, ssm_state = ssd(X, A, B, C, block_len=64)
-
-        print(f"{y.shape=}, {ssm_state.shape=}")
-
+    def forward(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> torch.Tensor:
+        bsz, seqlen, _ = x.shape
+        X, A, B, C = self.prepare_values(x, cos, sin)
+        y, _ = ssd(X, A, B, C, block_len=64)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        return self.wo(y)
 
+    def simple_matrix(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+        bsz, seqlen, _ = x.shape
+        X, A, B, C = self.prepare_values(x, cos, sin)
+        y, _ = simple_matrix(X, A, B, C)
+        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        return self.wo(y)
+
+    def simple_recurrsive(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> torch.Tensor:
+        X, A, B, C = self.prepare_values(x, cos, sin)
+        y, _ = simple_recurrsive(X, A, B, C)
         return self.wo(y)

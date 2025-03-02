@@ -7,6 +7,7 @@ extend-ignore=["D"]
 ignore=[
     "ANN101",
     "D103", "D104", "D105", "D107",
+    "E741",
     "FA102",
     "G004",
     "INP001",

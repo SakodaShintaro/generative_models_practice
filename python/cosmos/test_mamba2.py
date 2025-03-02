@@ -17,4 +17,12 @@ if __name__ == "__main__":
     cos = torch.randn(1, params.max_seq_length, 1, head_dim)
     sin = torch.randn(1, params.max_seq_length, 1, head_dim)
     y = block(x, cos, sin)
-    print(y.shape)
+
+    y_m = block.simple_matrix(x, cos, sin)
+    print(f"{y.shape=}, {y_m.shape=}")
+    assert torch.allclose(y, y_m)
+
+    y_r = block.simple_recurrsive(x, cos, sin)
+    print(f"{y.shape=}, {y_r.shape=}")
+    assert torch.allclose(y, y_r)
+    print("Tests pass.")
