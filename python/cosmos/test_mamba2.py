@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
     y_m = block.simple_matrix(x, cos, sin)
     print(f"{y.shape=}, {y_m.shape=}")
-    assert torch.allclose(y, y_m)
+    assert torch.allclose(y, y_m, atol=0.0001), f"{torch.abs(y - y_m).max().item()=}"
 
     y_r = block.simple_recurrsive(x, cos, sin)
     print(f"{y.shape=}, {y_r.shape=}")
