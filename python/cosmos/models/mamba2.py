@@ -133,17 +133,16 @@ def simple_recurrsive(
         Y: (batch, length, n_heads, d_head)
     """
     assert X.dtype == A.dtype == B.dtype == C.dtype
-    b, l, h, d = B.shape
-    state = torch.zeros(b, h, d, d, device=X.device, dtype=X.dtype)
+    b, l, h, d_head = X.shape
+    b, l, h, d_state = B.shape
+    state = torch.zeros(b, h, d_head, d_state, device=X.device, dtype=X.dtype)
     y_list = []
     for i in range(l):
-        curr_A = A[:, i, :, None, None]
-        curr_B = B[:, i, :, :]
-        curr_C = C[:, i, :, :]
-        curr_X = X[:, i, :, :]
-        l = state * torch.exp(curr_A)
-        r = torch.einsum("bhf,bhg->bhfg", curr_B, curr_X)
-        state = l + r
+        curr_A = A[:, i, :, None, None]  # (b, h, 1, 1)
+        curr_B = B[:, i, :, :]  # (b, h, d)
+        curr_C = C[:, i, :, :]  # (b, h, d)
+        curr_X = X[:, i, :, :]  # (b, h, d_head)
+        state = state * torch.exp(curr_A) + torch.einsum("bhf,bhg->bhgf", curr_B, curr_X)
         curr_Y = torch.einsum("bhfg,bhg->bhf", state, curr_C)
         y_list.append(curr_Y)
     Y = torch.stack(y_list, dim=1)

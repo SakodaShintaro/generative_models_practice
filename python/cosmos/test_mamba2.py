@@ -18,10 +18,12 @@ if __name__ == "__main__":
     sin = torch.randn(1, params.max_seq_length, 1, head_dim)
 
     y_ssd, state_ssd = block(x, cos, sin)
+    print(f"{y_ssd.shape=}, {state_ssd.shape=}")
     assert not torch.isnan(y_ssd).any(), f"{y_ssd=}"
     assert not torch.isnan(state_ssd).any(), f"{state_ssd=}"
 
     y_mat, state_mat = block.simple_matrix(x, cos, sin)
+    print(f"{y_mat.shape=}, {state_mat.shape=}")
     assert not torch.isnan(y_mat).any(), f"{y_mat=}"
     assert torch.allclose(y_ssd, y_mat, atol=0.0001), f"{torch.abs(y_ssd - y_mat).max().item()=}"
     assert torch.allclose(state_ssd, state_mat, atol=0.0001), (
@@ -29,6 +31,7 @@ if __name__ == "__main__":
     )
 
     y_rec, state_rec = block.simple_recurrsive(x, cos, sin)
+    print(f"{y_rec.shape=}, {state_rec.shape=}")
     assert not torch.isnan(y_rec).any(), f"{y_rec=}"
     assert torch.allclose(y_ssd, y_rec, atol=0.0001), f"{torch.abs(y_ssd - y_rec).max().item()=}"
     assert torch.allclose(state_ssd, state_rec, atol=0.0001), (
