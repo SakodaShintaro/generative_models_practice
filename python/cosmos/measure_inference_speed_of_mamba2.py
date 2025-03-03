@@ -5,7 +5,6 @@ from models.config import ModelArgs
 from models.mamba2 import MambaBlock
 
 if __name__ == "__main__":
-    # Test
     NUM = 100
     print("seq_len,ssd,matrix,recursive")
     for seq_len in [128, 256, 512, 1024, 2048]:
@@ -41,5 +40,3 @@ if __name__ == "__main__":
                 y_rec, state_rec = block.simple_recurrsive(x, cos, sin)
             ave = 1e3 * (time.time() - start) / 100
             print(f"{ave:.2f}")
-
-    print("Tests pass.")
