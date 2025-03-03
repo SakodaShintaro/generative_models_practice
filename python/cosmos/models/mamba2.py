@@ -114,7 +114,7 @@ def simple_matrix(
     Y = torch.einsum("blhn,bshn,bhls,bshp->blhp", C, B, L, X)
     decay_states = torch.exp(A_cumsum[:, :, -1:] - A_cumsum)
     states = torch.einsum("blhn,bhl,blhp->bhpn", B, decay_states, X)
-    return Y, states[:, -1]
+    return Y, states
 
 
 def simple_recurrsive(
@@ -133,11 +133,20 @@ def simple_recurrsive(
         Y: (batch, length, n_heads, d_head)
     """
     assert X.dtype == A.dtype == B.dtype == C.dtype
-    b, l, h, d = X.shape
-    state = torch.zeros(b, h, d, device=X.device, dtype=X.dtype)
+    b, l, h, d = B.shape
+    state = torch.zeros(b, h, d, d, device=X.device, dtype=X.dtype)
+    y_list = []
     for i in range(l):
-        state = state * torch.exp(A[:, i : i + 1, :, None]) + B[:, i, :, :] @ X[:, i, :, :]
-    Y = C @ state
+        curr_A = A[:, i, :, None, None]
+        curr_B = B[:, i, :, :]
+        curr_C = C[:, i, :, :]
+        curr_X = X[:, i, :, :]
+        l = state * torch.exp(curr_A)
+        r = torch.einsum("bhf,bhg->bhfg", curr_B, curr_X)
+        state = l + r
+        curr_Y = torch.einsum("bhfg,bhg->bhf", state, curr_C)
+        y_list.append(curr_Y)
+    Y = torch.stack(y_list, dim=1)
     return Y, state
 
 
@@ -191,7 +200,6 @@ class MambaBlock(nn.Module):
         X = X * dt
         A = A * dt
         A = A.squeeze(-1)
-        print(f"{X.shape=}, {A.shape=}, {B.shape=}, {C.shape=}, {dt.shape=}")
         return X, A, B, C
 
     def forward(
@@ -202,16 +210,16 @@ class MambaBlock(nn.Module):
     ) -> torch.Tensor:
         bsz, seqlen, _ = x.shape
         X, A, B, C = self.prepare_values(x, cos, sin)
-        y, _ = ssd(X, A, B, C, block_len=64)
+        y, state = ssd(X, A, B, C, block_len=64)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        return self.wo(y)
+        return self.wo(y), state
 
     def simple_matrix(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         bsz, seqlen, _ = x.shape
         X, A, B, C = self.prepare_values(x, cos, sin)
-        y, _ = simple_matrix(X, A, B, C)
+        y, state = simple_matrix(X, A, B, C)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        return self.wo(y)
+        return self.wo(y), state
 
     def simple_recurrsive(
         self,
@@ -219,6 +227,8 @@ class MambaBlock(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
     ) -> torch.Tensor:
+        bsz, seqlen, _ = x.shape
         X, A, B, C = self.prepare_values(x, cos, sin)
-        y, _ = simple_recurrsive(X, A, B, C)
-        return self.wo(y)
+        y, state = simple_recurrsive(X, A, B, C)
+        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        return self.wo(y), state

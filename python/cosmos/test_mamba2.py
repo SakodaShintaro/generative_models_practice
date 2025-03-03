@@ -16,13 +16,23 @@ if __name__ == "__main__":
     x = torch.randn(2, params.max_seq_length, params.dim)
     cos = torch.randn(1, params.max_seq_length, 1, head_dim)
     sin = torch.randn(1, params.max_seq_length, 1, head_dim)
-    y = block(x, cos, sin)
 
-    y_m = block.simple_matrix(x, cos, sin)
-    print(f"{y.shape=}, {y_m.shape=}")
-    assert torch.allclose(y, y_m, atol=0.0001), f"{torch.abs(y - y_m).max().item()=}"
+    y_ssd, state_ssd = block(x, cos, sin)
+    assert not torch.isnan(y_ssd).any(), f"{y_ssd=}"
+    assert not torch.isnan(state_ssd).any(), f"{state_ssd=}"
 
-    y_r = block.simple_recurrsive(x, cos, sin)
-    print(f"{y.shape=}, {y_r.shape=}")
-    assert torch.allclose(y, y_r)
+    y_mat, state_mat = block.simple_matrix(x, cos, sin)
+    assert not torch.isnan(y_mat).any(), f"{y_mat=}"
+    assert torch.allclose(y_ssd, y_mat, atol=0.0001), f"{torch.abs(y_ssd - y_mat).max().item()=}"
+    assert torch.allclose(state_ssd, state_mat, atol=0.0001), (
+        f"{torch.abs(state_ssd - state_mat).max().item()=}"
+    )
+
+    y_rec, state_rec = block.simple_recurrsive(x, cos, sin)
+    assert not torch.isnan(y_rec).any(), f"{y_rec=}"
+    assert torch.allclose(y_ssd, y_rec, atol=0.0001), f"{torch.abs(y_ssd - y_rec).max().item()=}"
+    assert torch.allclose(state_ssd, state_rec, atol=0.0001), (
+        f"{torch.abs(state_ssd - state_rec).max().item()=}"
+    )
+
     print("Tests pass.")
