@@ -165,7 +165,7 @@ class MambaBlock(nn.Module):
         self.wo = nn.Linear(dim, dim, bias=False)
 
         # Additional for Mamba
-        self.A_log = nn.Parameter(torch.empty(args.n_heads))
+        self.A_log = nn.Parameter(torch.zeros(args.n_heads))
         self.w_dt = nn.Linear(dim, args.n_heads, bias=True)
 
     def prepare_values(
