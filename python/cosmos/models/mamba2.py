@@ -201,12 +201,7 @@ class MambaBlock(nn.Module):
         A = A.squeeze(-1)
         return X, A, B, C
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         bsz, seqlen, _ = x.shape
         X, A, B, C = self.prepare_values(x, cos, sin)
         y, state = ssd(X, A, B, C, block_len=64)
