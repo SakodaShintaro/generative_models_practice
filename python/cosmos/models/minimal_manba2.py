@@ -27,7 +27,7 @@ class Mamba2Config:
     n_layer: int = 2  # number of Mamba-2 layers in the language model
     d_state: int = 256  # state dimension (N)
     d_conv: int = 4  # convolution kernel size
-    expand: int = 2  # expansion factor (E)
+    expand: int = 4  # expansion factor (E)
     nheads: int = 8  # head num
     chunk_size: int = 64  # matrix partition size (Q)
     vocab_size: int = 64_000
