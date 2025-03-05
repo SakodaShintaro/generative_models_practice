@@ -7,6 +7,7 @@ from dataset import Wayve101TokensDataset
 from models.config import ModelArgs
 from models.llama_transformer import LlamaTransformer
 from models.mamba2 import Mamba
+from models.minimal_manba2 import Mamba2LMHeadModel
 from models.vanilla_transformer import VanillaTransformerModel
 from torch import nn
 from torch.utils.data import DataLoader
@@ -21,7 +22,7 @@ def parse_args() -> argparse.Namespace:
         "--model_name",
         type=str,
         required=True,
-        choices=["llama", "vanilla", "mamba"],
+        choices=["llama", "vanilla", "mamba", "minimal_mamba2"],
     )
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=5)
@@ -120,7 +121,7 @@ if __name__ == "__main__":
 
     # GPUの設定
     assert torch.cuda.is_available(), "GPU is not available"
-    use_data_parallel = True
+    use_data_parallel = False
     if use_data_parallel:
         available_gpu_count = torch.cuda.device_count()
         gpu_ids = list(range(available_gpu_count))
@@ -163,6 +164,8 @@ if __name__ == "__main__":
             model = VanillaTransformerModel(params).to(device)
         case "mamba":
             model = Mamba(params).to(device)
+        case "minimal_mamba2":
+            model = Mamba2LMHeadModel().to(device)
 
     # DataParallelの適用
     if use_data_parallel:
