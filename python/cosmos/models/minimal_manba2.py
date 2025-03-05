@@ -1,17 +1,16 @@
+# ref. https://github.com/tommyip/mamba2-minimal/blob/main/mamba2.py
 """
 mamba2-minimal
 ==============
 
 A minimal, single-file implementation of the Mamba-2 model in PyTorch.
 
-> **Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality**
-> Authors: Tri Dao, Albert Gu
 > Paper: https://arxiv.org/abs/2405.21060
 """
 
-import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, NamedTuple, TypeAlias, cast
+from typing import NamedTuple, TypeAlias, cast
 
 import torch
 import torch.nn.functional as F
@@ -33,7 +32,7 @@ class Mamba2Config:
     vocab_size: int = 64_000
     pad_vocab_size_multiple: int = 16
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.d_inner = self.expand * self.d_model
         assert self.d_inner % self.nheads == 0
         self.headdim = self.d_inner // self.nheads
@@ -48,7 +47,7 @@ class InferenceCache(NamedTuple):
     ssm_state: Tensor  # (batch, nheads, headdim, d_state)
 
     @staticmethod
-    def alloc(batch_size: int, args: Mamba2Config, device: Device = None):
+    def alloc(batch_size: int, args: Mamba2Config, device: Device = None) -> "InferenceCache":
         return InferenceCache(
             torch.zeros(batch_size, args.d_inner + 2 * args.d_state, args.d_conv, device=device),
             torch.zeros(batch_size, args.nheads, args.headdim, args.d_state, device=device),
@@ -56,58 +55,30 @@ class InferenceCache(NamedTuple):
 
 
 class Mamba2LMHeadModel(nn.Module):
-    def __init__(self, device: Device = None):
+    def __init__(self, device: Device = None) -> None:
         args = Mamba2Config()
         super().__init__()
         self.args = args
         self.device = device
 
         self.backbone = nn.ModuleDict(
-            dict(
-                embedding=nn.Embedding(args.vocab_size, args.d_model, device=device),
-                layers=nn.ModuleList(
+            {
+                "embedding": nn.Embedding(args.vocab_size, args.d_model, device=device),
+                "layers": nn.ModuleList(
                     [
                         nn.ModuleDict(
-                            dict(
-                                mixer=Mamba2(args, device=device),
-                                norm=RMSNorm(args.d_model, device=device),
-                            )
+                            {
+                                "mixer": Mamba2(args, device=device),
+                                "norm": RMSNorm(args.d_model, device=device),
+                            }
                         )
                         for _ in range(args.n_layer)
                     ]
                 ),
-                norm_f=RMSNorm(args.d_model, device=device),
-            )
+                "norm_f": RMSNorm(args.d_model, device=device),
+            }
         )
         self.lm_head = nn.Linear(args.d_model, args.vocab_size, bias=False, device=device)
-        # self.lm_head.weight = self.backbone.embedding.weight
-
-    @staticmethod
-    def from_pretrained(huggingface_model_id: str, device: Device = None):
-        from transformers.utils import CONFIG_NAME, WEIGHTS_NAME
-        from transformers.utils.hub import cached_file
-
-        config_path = cached_file(huggingface_model_id, CONFIG_NAME)
-        assert config_path, "Failed to get huggingface config file"
-        state_dict_path = cached_file(huggingface_model_id, WEIGHTS_NAME)
-        assert state_dict_path, "Failed to get huggingface state dict file"
-
-        config = json.load(open(config_path))
-        args = Mamba2Config(
-            d_model=config["d_model"],
-            n_layer=config["n_layer"],
-            vocab_size=config["vocab_size"],
-            pad_vocab_size_multiple=config["pad_vocab_size_multiple"],
-        )
-
-        map_location = "cpu" if device is None else device
-        state_dict = torch.load(
-            state_dict_path, weights_only=True, map_location=map_location, mmap=True
-        )
-        model = Mamba2LMHeadModel(args, device=device)
-        model.load_state_dict(state_dict)
-        model.eval()
-        return model
 
     def forward(
         self, input_ids: LongTensor, h: list[InferenceCache] | list[None] | None = None
@@ -136,7 +107,7 @@ class Mamba2LMHeadModel(nn.Module):
 
         x = self.backbone.norm_f(x)
         logits = self.lm_head(x)
-        # return logits[:, :seqlen], cast(list[InferenceCache], h)
+        # return logits[:, :seqlen], cast(list[InferenceCache], h).
         return logits[:, :seqlen]
 
     def generate(
@@ -151,9 +122,9 @@ class Mamba2LMHeadModel(nn.Module):
         prefix, tokens = input_ids[:-1], input_ids[-1:].unsqueeze(0)
 
         # Process prompt
-        # The input sequence to forward (non-inference path) must have length multiple that of chunk_size.
-        # We split out excess tokens so that n_chunked tokens can be processed by one forward call and
-        # process the rest in multiple inference steps.
+        # The input sequence to forward must have length multiple that of chunk_size.
+        # We split out excess tokens so that n_chunked tokens can be processed by one forward call
+        # and process the rest in multiple inference steps.
         n_chunked = (prefix.shape[0] // self.args.chunk_size) * self.args.chunk_size
         if n_chunked > 0:
             _, h = self(prefix[:n_chunked].unsqueeze(0), None)
@@ -192,12 +163,12 @@ class Mamba2LMHeadModel(nn.Module):
 
 
 class Mamba2(nn.Module):
-    def __init__(self, args: Mamba2Config, device: Device = None):
+    def __init__(self, args: Mamba2Config, device: Device = None) -> None:
         super().__init__()
         self.args = args
         self.device = device
 
-        # Order: (z, x, B, C, dt)
+        # Order: (z, x, B, C, dt).
         d_in_proj = 2 * args.d_inner + 2 * args.d_state + args.nheads
         self.in_proj = nn.Linear(args.d_model, d_in_proj, bias=False, device=device)
 
@@ -217,7 +188,7 @@ class Mamba2(nn.Module):
         self.norm = RMSNorm(args.d_inner, device=device)
         self.out_proj = nn.Linear(args.d_inner, args.d_model, bias=False, device=device)
 
-    def forward(self, u: Tensor, h: InferenceCache | None = None):
+    def forward(self, u: Tensor, h: InferenceCache | None = None) -> tuple[Tensor, InferenceCache]:
         """
         Arguments
             u: (batch, seqlen, d_model) input. seqlen should be a multiple of chunk_size.
@@ -246,7 +217,7 @@ class Mamba2(nn.Module):
         # Pad or truncate xBC seqlen to d_conv
         conv_state = F.pad(rearrange(xBC, "b l d -> b d l"), (self.args.d_conv - u.shape[1], 0))
 
-        xBC = silu(
+        xBC = F.silu(
             self.conv1d(xBC.transpose(1, 2)).transpose(1, 2)[:, : u.shape[1], :]
         )  # (batch, seqlen, d_inner + 2 * d_state))
         x, B, C = torch.split(
@@ -306,7 +277,7 @@ class Mamba2(nn.Module):
         # Convolution step
         xBC = torch.sum(h.conv_state * rearrange(self.conv1d.weight, "d 1 w -> d w"), dim=-1)
         xBC += self.conv1d.bias
-        xBC = silu(xBC)
+        xBC = F.silu(xBC)
 
         x, B, C = torch.split(
             xBC, [self.args.d_inner, self.args.d_state, self.args.d_state], dim=-1
@@ -345,7 +316,7 @@ def segsum(x: Tensor, device: Device = None) -> Tensor:
     return x_segsum
 
 
-def ssd(x, A, B, C, chunk_size, initial_states=None, device: Device = None):
+def ssd(x, A, B, C, chunk_size, initial_states=None, device: Device = None) -> torch.Tensor:  # noqa: ANN001
     """Structed State Space Duality (SSD) - the core of Mamba-2
 
     This is almost the exact same minimal SSD code from the blog post.
@@ -367,8 +338,6 @@ def ssd(x, A, B, C, chunk_size, initial_states=None, device: Device = None):
     device = x.device
 
     # Rearrange into chunks
-    # Step 1, 2 and 4 of SSD can be computed in parallel for each chunk across devices (sequence parallel)
-    # This is not implemented and left as an exercise for the reader 😜
     x, A, B, C = [rearrange(m, "b (c l) ... -> b c l ...", l=chunk_size) for m in (x, A, B, C)]
 
     A = rearrange(A, "b c l h -> b h c l")
@@ -404,7 +373,7 @@ def ssd(x, A, B, C, chunk_size, initial_states=None, device: Device = None):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, d: int, eps: float = 1e-5, device: Device = None):
+    def __init__(self, d: int, eps: float = 1e-5, device: Device = None) -> None:
         """Gated Root Mean Square Layer Normalization
 
         Paper: https://arxiv.org/abs/1910.07467
@@ -413,15 +382,7 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(d, device=device))
 
-    def forward(self, x, z=None):
+    def forward(self, x, z=None) -> torch.Tensor:  # noqa: ANN001
         if z is not None:
-            x = x * silu(z)
+            x = x * F.silu(z)
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.weight
-
-
-def silu(x):
-    """Applies the Sigmoid Linear Unit (SiLU), element-wise.
-
-    Define this manually since torch's version doesn't seem to work on MPS.
-    """
-    return x * F.sigmoid(x)
