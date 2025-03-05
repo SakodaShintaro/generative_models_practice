@@ -1,6 +1,6 @@
 import torch
 from models.config import ModelArgs
-from models.mamba2 import MambaBlock
+from models.mamba2 import MambaBlock, Mamba
 
 if __name__ == "__main__":
     # Test
@@ -39,3 +39,8 @@ if __name__ == "__main__":
     )
 
     print("Tests pass.")
+
+    mamba = Mamba(params)
+    tokens = torch.randint(0, params.vocab_size, (2, 128))
+    y = mamba(tokens)
+    print(f"{y.shape=}")

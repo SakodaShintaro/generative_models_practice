@@ -149,7 +149,11 @@ def precompute_cos_sin(
 
 
 class LlamaTransformer(nn.Module):
-    def __init__(self, params: ModelArgs) -> None:
+    def __init__(
+        self,
+        params: ModelArgs,
+        block_type: type[TransformerBlock] = TransformerBlock,
+    ) -> None:
         super().__init__()
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
@@ -158,7 +162,7 @@ class LlamaTransformer(nn.Module):
 
         self.layers = torch.nn.ModuleList()
         for _ in range(params.n_layers):
-            self.layers.append(TransformerBlock(params))
+            self.layers.append(block_type(params))
 
         self.norm = RMSNorm(params.dim)
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)

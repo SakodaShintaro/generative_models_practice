@@ -4,7 +4,7 @@ from einops import rearrange
 from torch import nn
 
 from .config import ModelArgs
-from .llama_transformer import apply_rotary_pos_emb
+from .llama_transformer import LlamaTransformer, apply_rotary_pos_emb
 
 # ruff: noqa: N803, N806
 
@@ -226,3 +226,19 @@ class MambaBlock(nn.Module):
         y, state = simple_recurrsive(X, A, B, C)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         return self.wo(y), state
+
+class Mamba(LlamaTransformer):
+    def __init__(self, args: ModelArgs) -> None:
+        super().__init__(args, MambaBlock)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        _, seq_len = tokens.shape
+        h = self.tok_embeddings(tokens)
+        cos = self.cos_cached[:, :seq_len].to(h.dtype).to(h.device)
+        sin = self.sin_cached[:, :seq_len].to(h.dtype).to(h.device)
+
+        for layer in self.layers:
+            h, _ = layer(h, cos, sin)
+        h = self.norm(h)
+        output = self.output(h)
+        return output.float()
