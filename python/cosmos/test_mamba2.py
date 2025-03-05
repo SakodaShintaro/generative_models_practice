@@ -1,6 +1,6 @@
 import torch
 from models.config import ModelArgs
-from models.mamba2 import MambaBlock, Mamba
+from models.mamba2 import Mamba, MambaBlock
 
 if __name__ == "__main__":
     # Test
