@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
         choices=["llama", "vanilla", "mamba"],
     )
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--frame_len", type=int, default=8)
     parser.add_argument("--save_dir", type=Path, default=Path("./checkpoints"))
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     # モデルの初期化
     params = ModelArgs(
         dim=256,
-        n_layers=3,
+        n_layers=2,
         n_heads=8,
         vocab_size=VOCAB_SIZE,
         max_seq_length=args.frame_len * 128,  # multiply `num_tokens_per_frame`
