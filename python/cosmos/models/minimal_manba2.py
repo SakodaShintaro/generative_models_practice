@@ -23,9 +23,9 @@ Device: TypeAlias = str | torch.device | None
 
 @dataclass
 class Mamba2Config:
-    d_model: int = 128  # model dimension (D)
+    d_model: int = 256  # model dimension (D)
     n_layer: int = 2  # number of Mamba-2 layers in the language model
-    d_state: int = 128  # state dimension (N)
+    d_state: int = 256  # state dimension (N)
     d_conv: int = 4  # convolution kernel size
     expand: int = 2  # expansion factor (E)
     nheads: int = 8  # head num
@@ -80,7 +80,7 @@ class Mamba2LMHeadModel(nn.Module):
             )
         )
         self.lm_head = nn.Linear(args.d_model, args.vocab_size, bias=False, device=device)
-        self.lm_head.weight = self.backbone.embedding.weight
+        # self.lm_head.weight = self.backbone.embedding.weight
 
     @staticmethod
     def from_pretrained(huggingface_model_id: str, device: Device = None):
@@ -211,9 +211,9 @@ class Mamba2(nn.Module):
             device=device,
         )
 
-        self.dt_bias = nn.Parameter(torch.empty(args.nheads, device=device))
-        self.A_log = nn.Parameter(torch.empty(args.nheads, device=device))
-        self.D = nn.Parameter(torch.empty(args.nheads, device=device))
+        self.dt_bias = nn.Parameter(torch.zeros(args.nheads, device=device))
+        self.A_log = nn.Parameter(torch.zeros(args.nheads, device=device))
+        self.D = nn.Parameter(torch.zeros(args.nheads, device=device))
         self.norm = RMSNorm(args.d_inner, device=device)
         self.out_proj = nn.Linear(args.d_inner, args.d_model, bias=False, device=device)
 
