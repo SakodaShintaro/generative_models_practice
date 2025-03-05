@@ -164,6 +164,29 @@ class MambaBlock(nn.Module):
         self.wv = nn.Linear(dim, dim, bias=False)
         self.wo = nn.Linear(dim, dim, bias=False)
 
+        d_conv = 4
+        self.conv1d_X = nn.Conv1d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=d_conv,
+            groups=dim,
+            padding=d_conv - 1,
+        )
+        self.conv1d_B = nn.Conv1d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=d_conv,
+            groups=dim,
+            padding=d_conv - 1,
+        )
+        self.conv1d_C = nn.Conv1d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=d_conv,
+            groups=dim,
+            padding=d_conv - 1,
+        )
+
         # Additional for Mamba
         self.A_log = nn.Parameter(torch.zeros(args.n_heads))
         self.w_dt = nn.Linear(dim, args.n_heads, bias=True)
@@ -194,7 +217,25 @@ class MambaBlock(nn.Module):
         B = xk  # (batch, seqlen, nheads, d_head)
         C = xq  # (batch, seqlen, nheads, d_head)
 
-        # conv1d (skip).
+        # conv1d
+        X = X.reshape(bsz, seqlen, -1)
+        X = X.transpose(1, 2)
+        X = self.conv1d_X(X)
+        X = X[:, :, :seqlen]
+        X = X.transpose(1, 2)
+        X = X.reshape(bsz, seqlen, self.n_heads, self.head_dim)
+        B = B.reshape(bsz, seqlen, -1)
+        B = B.transpose(1, 2)
+        B = self.conv1d_B(B)
+        B = B[:, :, :seqlen]
+        B = B.transpose(1, 2)
+        B = B.reshape(bsz, seqlen, self.n_heads, self.head_dim)
+        C = C.reshape(bsz, seqlen, -1)
+        C = C.transpose(1, 2)
+        C = self.conv1d_C(C)
+        C = C[:, :, :seqlen]
+        C = C.transpose(1, 2)
+        C = C.reshape(bsz, seqlen, self.n_heads, self.head_dim)
 
         # Activation
         X = F.silu(X)
@@ -231,6 +272,7 @@ class MambaBlock(nn.Module):
         y, state = simple_recurrsive(X, A, B, C)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         return self.wo(y), state
+
 
 class Mamba(LlamaTransformer):
     def __init__(self, args: ModelArgs) -> None:
