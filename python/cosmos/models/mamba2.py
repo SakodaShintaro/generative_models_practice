@@ -190,12 +190,17 @@ class MambaBlock(nn.Module):
         dt.unsqueeze_(-1)
 
         # SSM notation
-        X = xv
-        B = xk
-        C = xq
+        X = xv  # (batch, seqlen, nheads, d_head)
+        B = xk  # (batch, seqlen, nheads, d_head)
+        C = xq  # (batch, seqlen, nheads, d_head)
 
         # conv1d (skip).
-        # SwiGLU (skip).
+
+        # Activation
+        X = F.silu(X)
+        B = F.silu(B)
+        C = F.silu(C)
+
         X = X * dt
         A = A * dt
         A = A.squeeze(-1)
