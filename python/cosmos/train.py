@@ -6,6 +6,7 @@ import wandb
 from dataset import Wayve101TokensDataset
 from models.config import ModelArgs
 from models.llama_transformer import LlamaTransformer
+from models.mamba2 import Mamba
 from models.vanilla_transformer import VanillaTransformerModel
 from torch import nn
 from torch.utils.data import DataLoader
@@ -16,6 +17,12 @@ VOCAB_SIZE = 64_000
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, required=True)
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        required=True,
+        choices=["llama", "vanilla", "mamba"],
+    )
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.001)
@@ -39,11 +46,12 @@ def train_epoch(
         # [batch_size, seq_len].
         data = data.to(device)
 
-        src = data[:, :-1].long()
+        src = data.long()
         tgt = data[:, 1:].long()
 
         optimizer.zero_grad()
         output = model(src)
+        output = output[:, :-1]
 
         loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
         loss.backward()
@@ -77,10 +85,11 @@ def validate(
             # [batch_size, seq_len].
             data = data.to(device)
 
-            src = data[:, :-1].long()
+            src = data.long()
             tgt = data[:, 1:].long()
 
             output = model(src)
+            output = output[:, :-1]
 
             loss = criterion(output.reshape(-1, output.size(-1)), tgt.reshape(-1))
             total_loss += loss.item()
@@ -147,12 +156,13 @@ if __name__ == "__main__":
         vocab_size=VOCAB_SIZE,
         max_seq_length=args.frame_len * 128,  # multiply `num_tokens_per_frame`
     )
-    model_name = "llama"
-    match model_name:
+    match args.model_name:
         case "llama":
             model = LlamaTransformer(params).to(device)
         case "vanilla":
             model = VanillaTransformerModel(params).to(device)
+        case "mamba":
+            model = Mamba(params).to(device)
 
     # DataParallelの適用
     if use_data_parallel:

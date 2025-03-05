@@ -56,7 +56,7 @@ def ssd(
         Y: (batch, length, n_heads, d_head)
     """
     assert X.dtype == A.dtype == B.dtype == C.dtype
-    assert X.shape[1] % block_len == 0
+    assert X.shape[1] % block_len == 0, f"{X.shape=}, {block_len=}"
 
     # Rearrange into blocks/chunks
     X, A, B, C = [rearrange(x, "b (c l) ... -> b c l ...", l=block_len) for x in (X, A, B, C)]
