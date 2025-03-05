@@ -28,15 +28,15 @@ class Mamba2Config:
     d_state: int = 128  # state dimension (N)
     d_conv: int = 4  # convolution kernel size
     expand: int = 2  # expansion factor (E)
-    headdim: int = 64  # head dimension (P)
+    nheads: int = 8  # head num
     chunk_size: int = 64  # matrix partition size (Q)
     vocab_size: int = 64_000
     pad_vocab_size_multiple: int = 16
 
     def __post_init__(self):
         self.d_inner = self.expand * self.d_model
-        assert self.d_inner % self.headdim == 0
-        self.nheads = self.d_inner // self.headdim
+        assert self.d_inner % self.nheads == 0
+        self.headdim = self.d_inner // self.nheads
         if self.vocab_size % self.pad_vocab_size_multiple != 0:
             self.vocab_size += (
                 self.pad_vocab_size_multiple - self.vocab_size % self.pad_vocab_size_multiple
