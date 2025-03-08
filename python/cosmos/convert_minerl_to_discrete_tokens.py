@@ -80,6 +80,7 @@ if __name__ == "__main__":
     BATCH_SIZE = 2 ** 8
 
     for subdir in tqdm(subdir_list):
+        print(subdir)
         iamge_path_list = sorted((subdir / "obs").glob("*.png"))
         curr_tokens_result_dir = subdir / "tokens"
         curr_tokens_result_dir.mkdir(exist_ok=True, parents=True)
@@ -137,4 +138,3 @@ if __name__ == "__main__":
                 indices_path = curr_tokens_result_dir / f"{image_path.stem}.csv"
                 indices = indices.cpu().numpy().flatten()
                 np.savetxt(indices_path, indices, delimiter=",", fmt="%d")
-        break
