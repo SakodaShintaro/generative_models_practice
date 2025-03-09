@@ -22,14 +22,14 @@ Device: TypeAlias = str | torch.device | None
 
 @dataclass
 class Mamba2Config:
-    d_model: int = 256  # model dimension (D)
+    d_model: int = 16  # model dimension (D)
     n_layer: int = 1  # number of Mamba-2 layers in the language model
-    d_state: int = 256  # state dimension (N)
+    d_state: int = 16  # state dimension (N)
     d_conv: int = 4  # convolution kernel size
-    expand: int = 4  # expansion factor (E)
+    expand: int = 2  # expansion factor (E)
     nheads: int = 8  # head num
-    chunk_size: int = 64  # matrix partition size (Q)
-    vocab_size: int = 64_000
+    chunk_size: int = 32  # matrix partition size (Q)
+    vocab_size: int = 1_000
     pad_vocab_size_multiple: int = 16
 
     def __post_init__(self) -> None:
@@ -288,7 +288,8 @@ class Mamba2(nn.Module):
         dA = torch.exp(dt * A)  # (batch, nheads)
         x = rearrange(x, "b (h p) -> b h p", p=self.args.headdim)
         dBx = torch.einsum("bh, bn, bhp -> bhpn", dt, B, x)
-        h.ssm_state.copy_(h.ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx)
+        # h.ssm_state.copy_(h.ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx).
+        h = InferenceCache(h.conv_state, h.ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx)
         y = torch.einsum("bhpn, bn -> bhp", h.ssm_state, C)
         y = y + rearrange(self.D, "h -> h 1") * x
         y = rearrange(y, "b h p -> b (h p)")
