@@ -9,6 +9,16 @@ def f(S, w, z, b, v, k):
     return S
 
 
+def compute_loss(params, init_S):
+    w, z, b, v, k = params
+    curr_S = init_S
+
+    for i in range(w.shape[0]):
+        curr_S = f(curr_S, w[i], z[i], b[i], v[i], k[i])
+
+    return jnp.mean(curr_S)
+
+
 if __name__ == "__main__":
     HEAD_NUM = 16
     HEAD_SIZE = 64
@@ -22,9 +32,14 @@ if __name__ == "__main__":
     v = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     k = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
 
-    for i in range(TIMESTEP):
-        curr_S = f(curr_S, w[i], z[i], b[i], v[i], k[i])
-        print(f"{curr_S.shape=}")
+    params = (w, z, b, v, k)
 
-    loss = jnp.mean(curr_S)
-    print(f"{loss=}")
+    loss_val, grads = jax.value_and_grad(compute_loss, argnums=0)(params, curr_S)
+
+    grad_w, grad_z, grad_b, grad_v, grad_k = grads
+    print(f"Loss: {loss_val}")
+    print(f"w: {grad_w.shape=}")
+    print(f"z: {grad_z.shape=}")
+    print(f"b: {grad_b.shape=}")
+    print(f"v: {grad_v.shape=}")
+    print(f"k: {grad_k.shape=}")
