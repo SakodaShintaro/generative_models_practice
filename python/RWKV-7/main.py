@@ -89,9 +89,7 @@ def custum_bwd(res, g):
     return result
 
 
-def compute_loss_bptt(params, init_S, y):
-    curr_S = init_S
-
+def compute_loss_bptt(params, curr_S, y):
     sum_loss = 0
 
     w, z, b, v, k, q = params
@@ -117,7 +115,7 @@ def compute_loss_rtrl(params, curr_S, sensitivity_mats, y):
 if __name__ == "__main__":
     HEAD_NUM = 2
     HEAD_SIZE = 8
-    TIMESTEP = 10
+    TIMESTEP = 1
 
     curr_S = jnp.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
     y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
@@ -165,6 +163,8 @@ if __name__ == "__main__":
         )(params, curr_S, sensitivity_mats, y[t])
         loss_rtrl += curr_loss / TIMESTEP
 
+    print(f"{loss_bptt.item()}")
+    print(f"{loss_rtrl.item()}")
     diff_loss = jnp.abs(loss_bptt - loss_rtrl)
     jnp.allclose(loss_bptt, loss_rtrl), "Losses are not equal"
 
