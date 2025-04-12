@@ -35,7 +35,6 @@ def f_impl(S, sensitivity_mats, w, z, b, v, k):
     S = f1(S, w, z, b, v, k)
     sw, sz, sb, sv, sk = sensitivity_mats
 
-    ones = jnp.ones(sw.shape[1])
     identity = jnp.eye(sw.shape[1])
 
     w = w.squeeze(-1)
@@ -51,7 +50,7 @@ def f_impl(S, sensitivity_mats, w, z, b, v, k):
     # x: (HEAD_NUM, HEAD_SIZE, 1)
     # sx: (HEAD_NUM, HEAD_SIZE(w param), HEAD_SIZE(si), HEAD_SIZE(sj))
     sw = recursive(sw) + jnp.einsum("hij,pj->hpij", prev_S, identity)
-    sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", prev_S, ones, b)
+    sz = recursive(sz) + jnp.einsum("hik,pk,hj->hpij", prev_S, identity, b)
     sb = recursive(sb) + jnp.einsum("hik,hk,pj->hpij", prev_S, z, identity)
     sv = recursive(sv) + jnp.einsum("pi,hj->hpij", identity, k)
     sk = recursive(sk) + jnp.einsum("hi,pj->hpij", v, identity)
