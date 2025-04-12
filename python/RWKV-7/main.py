@@ -4,6 +4,15 @@ import jax.numpy as jnp
 # ruff: noqa: ANN001, ANN201, ANN202, ANN204, ANN205, ERA001, N816
 
 
+def print_tuple_tree(t, indent=0):
+    for i, value in enumerate(t):
+        print("  " * indent + str(i))
+        if isinstance(value, tuple):
+            print_tuple_tree(value, indent + 1)
+        else:
+            print("  " * (indent + 1) + str(value.shape))
+
+
 def f1(S, w, z, b, v, k):
     return S * w.mT + S @ z * b.mT + v * k.mT
 
@@ -17,7 +26,7 @@ def f2(S, w, z, b, v, k):
 
 
 def f_impl(S, sensitivity_mats, w, z, b, v, k):
-    S = S * w.mT - S @ z * b.mT + v * k.mT
+    S = S * w.mT + S @ z * b.mT + v * k.mT
     return (S, sensitivity_mats)
 
 
@@ -27,13 +36,27 @@ def custum_f(S, sensitivity_mats, z, w, b, v, k):
 
 
 def custum_fwd(S, sensitivity_mats, w, z, b, v, k):
-    f_out, vjp_func = jax.vjp(f_impl, S, sensitivity_mats, w, z, b, v, k)
-    return f_out, (vjp_func, f_out)
+    prev_S = S
+    (S, sensitivity_mats), vjp_func = jax.vjp(f_impl, S, sensitivity_mats, w, z, b, v, k)
+    return (S, sensitivity_mats), (vjp_func, prev_S, sensitivity_mats, w, z, b, v, k)
 
 
 def custum_bwd(res, g):
-    vjp_func, f_out = res
-    return vjp_func(g)
+    dS, d_sensitivity_mats = g[0], g[1]
+    vjp_func, prev_S, sensitivity_mats, w, z, b, v, k = res
+
+    sw, sz, sb, sv, sk = sensitivity_mats
+
+    # vjp
+    vw = jnp.einsum("hij,hkij->hk", dS, sw)[..., jnp.newaxis]
+    vz = jnp.einsum("hij,hkij->hk", dS, sz)[..., jnp.newaxis]
+    vb = jnp.einsum("hij,hkij->hk", dS, sb)[..., jnp.newaxis]
+    vv = jnp.einsum("hij,hkij->hk", dS, sv)[..., jnp.newaxis]
+    vk = jnp.einsum("hij,hkij->hk", dS, sk)[..., jnp.newaxis]
+
+    result = (dS, d_sensitivity_mats, vw, vz, vb, vv, vk)
+
+    return result
 
 
 def compute_loss(params, init_S, y):
