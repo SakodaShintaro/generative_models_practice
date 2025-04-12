@@ -49,7 +49,7 @@ def f_impl(S, sensitivity_mats, w, z, b, v, k):
     # Update sensitivity matrices
     # x: (HEAD_NUM, HEAD_SIZE, 1)
     # sx: (HEAD_NUM, HEAD_SIZE(w param), HEAD_SIZE(si), HEAD_SIZE(sj))
-    sw = recursive(sw) + jnp.einsum("hik,pj->hpij", S, identity)
+    sw = recursive(sw) + jnp.einsum("hij,pj->hpij", S, identity)
     sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", S, ones, b)
     sb = recursive(sb) + jnp.einsum("hij,hj,p->hpij", S, z, ones)
     sv = recursive(sv) + jnp.einsum("pi,hj->hpij", identity, k)
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     HEAD_SIZE = 8
     TIMESTEP = 1
 
-    curr_S = jnp.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
+    curr_S = jnp.ones((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
     y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
 
     rng = jax.random.PRNGKey(0)
@@ -158,10 +158,13 @@ if __name__ == "__main__":
     )
     for t in range(TIMESTEP):
         params = (w[t], z[t], b[t], v[t], k[t], q[t])
-        (curr_loss, (curr_S, sensitivity_mats)), grads_rtrl = jax.value_and_grad(
+        (curr_loss, (curr_S, sensitivity_mats)), curr_grads_rtrl = jax.value_and_grad(
             compute_loss_rtrl, argnums=0, has_aux=True
         )(params, curr_S, sensitivity_mats, y[t])
         loss_rtrl += curr_loss / TIMESTEP
+        grads_rtrl = tuple(
+            grads_rtrl[i] + curr_grads_rtrl[i] / TIMESTEP for i in range(len(grads_rtrl))
+        )
 
     print(f"{loss_bptt.item()}")
     print(f"{loss_rtrl.item()}")
@@ -169,5 +172,8 @@ if __name__ == "__main__":
     jnp.allclose(loss_bptt, loss_rtrl), "Losses are not equal"
 
     # Check if the gradients are equal
-    for grad_bptt, grad_rtrl in zip(grads_bptt, grads_rtrl):
-        assert jnp.allclose(grad_bptt, grad_rtrl), "Gradients are not equal"
+    for i, (grad_bptt, grad_rtrl) in enumerate(zip(grads_bptt, grads_rtrl)):
+        print(f"{i=}")
+        assert jnp.allclose(grad_bptt, grad_rtrl), (
+            f"Gradients are not equal {grad_bptt[0][0].T} {grad_rtrl[0][0].T}"
+        )
