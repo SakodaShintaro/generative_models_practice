@@ -111,7 +111,7 @@ def compute_loss_rtrl(params, curr_S, sensitivity_mats, y):
 if __name__ == "__main__":
     HEAD_NUM = 2
     HEAD_SIZE = 8
-    TIMESTEP = 2
+    TIMESTEP = 10
 
     curr_S = jnp.ones((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
     y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
