@@ -18,10 +18,15 @@ def f1(S, w, z, b, v, k):
 
 
 def f2(S, w, z, b, v, k):
+    w = w.squeeze(-1)
+    z = z.squeeze(-1)
+    b = b.squeeze(-1)
+    v = v.squeeze(-1)
+    k = k.squeeze(-1)
     return (
-        jnp.einsum("hij,hj->hij", S, w.squeeze(-1))
-        + jnp.einsum("hik,hk,hj->hij", S, z.squeeze(-1), b.squeeze(-1))
-        + jnp.einsum("hi,hj->hij", v.squeeze(-1), k.squeeze(-1))
+        jnp.einsum("hij,hj->hij", S, w)
+        + jnp.einsum("hik,hk,hj->hij", S, z, b)
+        + jnp.einsum("hi,hj->hij", v, k)
     )
 
 
