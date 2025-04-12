@@ -111,7 +111,7 @@ def compute_loss_rtrl(params, curr_S, sensitivity_mats, y):
     curr_S, sensitivity_mats = custum_f(curr_S, sensitivity_mats, w, z, b, v, k)
     curr_pred = curr_S @ q
     curr_loss = jnp.mean((curr_pred - y) ** 2)
-    return curr_loss
+    return curr_loss, (curr_S, sensitivity_mats)
 
 
 if __name__ == "__main__":
@@ -160,9 +160,9 @@ if __name__ == "__main__":
     sum_loss = 0
     for t in range(TIMESTEP):
         params = (w[t], z[t], b[t], v[t], k[t], q[t])
-        curr_loss, grad = jax.value_and_grad(compute_loss_rtrl, argnums=0)(
-            params, curr_S, sensitivity_mats, y[t]
-        )
+        (curr_loss, (curr_S, sensitivity_mats)), grad = jax.value_and_grad(
+            compute_loss_rtrl, argnums=0, has_aux=True
+        )(params, curr_S, sensitivity_mats, y[t])
         sum_loss += curr_loss / TIMESTEP
         print(f"Loss: {curr_loss}")
     print(f"Sum Loss: {sum_loss}")
