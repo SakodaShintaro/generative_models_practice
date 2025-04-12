@@ -26,7 +26,32 @@ def f2(S, w, z, b, v, k):
 
 
 def f_impl(S, sensitivity_mats, w, z, b, v, k):
-    S = S * w.mT + S @ z * b.mT + v * k.mT
+    S = f1(S, w, z, b, v, k)
+    sw, sz, sb, sv, sk = sensitivity_mats
+
+    ones = jnp.ones(sw.shape[1])
+    identity = jnp.eye(sw.shape[1])
+
+    w = w.squeeze(-1)
+    z = z.squeeze(-1)
+    b = b.squeeze(-1)
+    v = v.squeeze(-1)
+    k = k.squeeze(-1)
+
+    def recursive(x):
+        return jnp.einsum("hpij,hj->hpij", x, w) + jnp.einsum("hpik,hk,hj->hpij", x, z, b)
+
+    # Update sensitivity matrices
+    # x: (HEAD_NUM, HEAD_SIZE, 1)
+    # sx: (HEAD_NUM, HEAD_SIZE(w param), HEAD_SIZE(si), HEAD_SIZE(sj))
+    sw = recursive(sw) + jnp.einsum("hik,pj->hpij", S, identity)
+    sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", S, ones, b)
+    sb = recursive(sb) + jnp.einsum("hij,hj,p->hpij", S, z, ones)
+    sv = recursive(sv) + jnp.einsum("pi,hj->hpij", identity, k)
+    sk = recursive(sk) + jnp.einsum("hi,pj->hpij", v, identity)
+
+    sensitivity_mats = (sw, sz, sb, sv, sk)
+
     return (S, sensitivity_mats)
 
 
@@ -42,19 +67,19 @@ def custum_fwd(S, sensitivity_mats, w, z, b, v, k):
 
 
 def custum_bwd(res, g):
-    dS, d_sensitivity_mats = g[0], g[1]
+    dL_dS, d_sensitivity_mats = g[0], g[1]
     vjp_func, prev_S, sensitivity_mats, w, z, b, v, k = res
 
     sw, sz, sb, sv, sk = sensitivity_mats
 
     # vjp
-    vw = jnp.einsum("hij,hkij->hk", dS, sw)[..., jnp.newaxis]
-    vz = jnp.einsum("hij,hkij->hk", dS, sz)[..., jnp.newaxis]
-    vb = jnp.einsum("hij,hkij->hk", dS, sb)[..., jnp.newaxis]
-    vv = jnp.einsum("hij,hkij->hk", dS, sv)[..., jnp.newaxis]
-    vk = jnp.einsum("hij,hkij->hk", dS, sk)[..., jnp.newaxis]
+    vw = jnp.einsum("hij,hpij->hp", dL_dS, sw)[..., jnp.newaxis]
+    vz = jnp.einsum("hij,hpij->hp", dL_dS, sz)[..., jnp.newaxis]
+    vb = jnp.einsum("hij,hpij->hp", dL_dS, sb)[..., jnp.newaxis]
+    vv = jnp.einsum("hij,hpij->hp", dL_dS, sv)[..., jnp.newaxis]
+    vk = jnp.einsum("hij,hpij->hp", dL_dS, sk)[..., jnp.newaxis]
 
-    result = (dS, d_sensitivity_mats, vw, vz, vb, vv, vk)
+    result = (dL_dS, d_sensitivity_mats, vw, vz, vb, vv, vk)
 
     return result
 
@@ -97,9 +122,11 @@ if __name__ == "__main__":
     k = jax.random.normal(rng_k, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     q = jax.random.normal(rng_q, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
 
-    S1 = f1(curr_S, w[0], z[0], b[0], v[0], k[0])
-    S2 = f2(curr_S, w[0], z[0], b[0], v[0], k[0])
-    assert jnp.allclose(S1, S2), "S1 and S2 are not equal"
+    S1 = S2 = jnp.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
+    for t in range(TIMESTEP):
+        S1 = f1(S1, w[t], z[t], b[t], v[t], k[t])
+        S2 = f2(S2, w[t], z[t], b[t], v[t], k[t])
+        assert jnp.allclose(S1, S2), "S1 and S2 are not equal"
 
     # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
