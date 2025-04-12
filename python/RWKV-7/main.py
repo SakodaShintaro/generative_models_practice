@@ -139,15 +139,7 @@ if __name__ == "__main__":
 
     # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
-    loss_val, grads = jax.value_and_grad(compute_loss_bptt, argnums=0)(params, curr_S, y)
-    grad_w, grad_z, grad_b, grad_v, grad_k, grad_q = grads
-    print(f"Loss: {loss_val}")
-    print(f"w: {grad_w.shape=}")
-    print(f"z: {grad_z.shape=}")
-    print(f"b: {grad_b.shape=}")
-    print(f"v: {grad_v.shape=}")
-    print(f"k: {grad_k.shape=}")
-    print(f"q: {grad_q.shape=}")
+    loss_bptt, grads_bptt = jax.value_and_grad(compute_loss_bptt, argnums=0)(params, curr_S, y)
 
     # RTRL (Real-Time Recurrent Learning)
     custum_f.defvjp(custum_fwd, custum_bwd)
@@ -157,12 +149,25 @@ if __name__ == "__main__":
     sensitivity_v = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_k = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_mats = (sensitivity_w, sensitivity_z, sensitivity_b, sensitivity_v, sensitivity_k)
-    sum_loss = 0
+    loss_rtrl = 0
+    grads_rtrl = (
+        jnp.zeros_like(w),
+        jnp.zeros_like(z),
+        jnp.zeros_like(b),
+        jnp.zeros_like(v),
+        jnp.zeros_like(k),
+        jnp.zeros_like(q),
+    )
     for t in range(TIMESTEP):
         params = (w[t], z[t], b[t], v[t], k[t], q[t])
-        (curr_loss, (curr_S, sensitivity_mats)), grad = jax.value_and_grad(
+        (curr_loss, (curr_S, sensitivity_mats)), grads_rtrl = jax.value_and_grad(
             compute_loss_rtrl, argnums=0, has_aux=True
         )(params, curr_S, sensitivity_mats, y[t])
-        sum_loss += curr_loss / TIMESTEP
-        print(f"Loss: {curr_loss}")
-    print(f"Sum Loss: {sum_loss}")
+        loss_rtrl += curr_loss / TIMESTEP
+
+    diff_loss = jnp.abs(loss_bptt - loss_rtrl)
+    jnp.allclose(loss_bptt, loss_rtrl), "Losses are not equal"
+
+    # Check if the gradients are equal
+    for grad_bptt, grad_rtrl in zip(grads_bptt, grads_rtrl):
+        assert jnp.allclose(grad_bptt, grad_rtrl), "Gradients are not equal"
