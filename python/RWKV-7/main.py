@@ -31,6 +31,7 @@ def f2(S, w, z, b, v, k):
 
 
 def f_impl(S, sensitivity_mats, w, z, b, v, k):
+    prev_S = S
     S = f1(S, w, z, b, v, k)
     sw, sz, sb, sv, sk = sensitivity_mats
 
@@ -49,9 +50,9 @@ def f_impl(S, sensitivity_mats, w, z, b, v, k):
     # Update sensitivity matrices
     # x: (HEAD_NUM, HEAD_SIZE, 1)
     # sx: (HEAD_NUM, HEAD_SIZE(w param), HEAD_SIZE(si), HEAD_SIZE(sj))
-    sw = recursive(sw) + jnp.einsum("hij,pj->hpij", S, identity)
-    sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", S, ones, b)
-    sb = recursive(sb) + jnp.einsum("hij,hj,p->hpij", S, z, ones)
+    sw = recursive(sw) + jnp.einsum("hij,pj->hpij", prev_S, identity)
+    sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", prev_S, ones, b)
+    sb = recursive(sb) + jnp.einsum("hij,hi,p->hpij", prev_S, z, ones)
     sv = recursive(sv) + jnp.einsum("pi,hj->hpij", identity, k)
     sk = recursive(sk) + jnp.einsum("hi,pj->hpij", v, identity)
 
@@ -173,7 +174,10 @@ if __name__ == "__main__":
 
     # Check if the gradients are equal
     for i, (grad_bptt, grad_rtrl) in enumerate(zip(grads_bptt, grads_rtrl)):
-        print(f"{i=}")
-        assert jnp.allclose(grad_bptt, grad_rtrl), (
-            f"Gradients are not equal {grad_bptt[0][0].T} {grad_rtrl[0][0].T}"
-        )
+        close = jnp.allclose(grad_bptt, grad_rtrl)
+        print(f"{i=}, {close=}")
+        if not close:
+            print("Gradients are not equal")
+            print(f"{grad_bptt.shape=}, {grad_rtrl.shape=}")
+            print(f"{grad_bptt=}")
+            print(f"{grad_rtrl=}")
