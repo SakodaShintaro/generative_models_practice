@@ -98,8 +98,6 @@ def compute_loss_bptt(params, curr_S, y):
         curr_pred = curr_S @ q[t]
         curr_loss = jnp.mean((curr_pred - y[t]) ** 2)
         sum_loss += curr_loss
-
-    sum_loss /= w.shape[0]
     return sum_loss
 
 
@@ -114,7 +112,7 @@ def compute_loss_rtrl(params, curr_S, sensitivity_mats, y):
 if __name__ == "__main__":
     HEAD_NUM = 2
     HEAD_SIZE = 8
-    TIMESTEP = 1
+    TIMESTEP = 2
 
     curr_S = jnp.ones((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
     y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
@@ -137,6 +135,7 @@ if __name__ == "__main__":
     # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
     loss_bptt, grads_bptt = jax.value_and_grad(compute_loss_bptt, argnums=0)(params, curr_S, y)
+    loss_bptt /= TIMESTEP
 
     # RTRL (Real-Time Recurrent Learning)
     custum_f.defvjp(custum_fwd, custum_bwd)
@@ -172,6 +171,8 @@ if __name__ == "__main__":
 
     # Check if the gradients are equal
     for i, (grad_bptt, grad_rtrl) in enumerate(zip(grads_bptt, grads_rtrl)):
+        grad_bptt = jnp.sum(grad_bptt, axis=0)
+        grad_rtrl = jnp.sum(grad_rtrl, axis=0)
         close = jnp.allclose(grad_bptt, grad_rtrl)
         print(f"{i=}, {close=}")
         if not close:
