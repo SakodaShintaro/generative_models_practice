@@ -88,10 +88,8 @@ def custum_bwd(sensitivity_mats, g):
 
 
 def compute_loss_bptt(params, curr_S, y):
-    sum_loss = 0
-
     w, z, b, v, k, q = params
-
+    sum_loss = 0
     for t in range(w.shape[0]):
         curr_S = f1(curr_S, w[t], z[t], b[t], v[t], k[t])
         curr_pred = curr_S @ q[t]
