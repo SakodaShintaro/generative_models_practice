@@ -40,7 +40,6 @@ def compute_loss(params, init_S, y):
         curr_pred = curr_S @ q[i]
         curr_loss = jnp.mean((curr_pred - y[i]) ** 2)
         sum_loss += curr_loss
-        print(f"curr_loss: {curr_loss.item()}")
 
     sum_loss /= w.shape[0]
     return sum_loss
@@ -56,20 +55,21 @@ if __name__ == "__main__":
     HEAD_SIZE = 8
     TIMESTEP = 10
 
-    rng = jax.random.PRNGKey(0)
     curr_S = jnp.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
-    w = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
-    z = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
-    b = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
-    v = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
-    k = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
-    q = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
 
+    rng = jax.random.PRNGKey(0)
+    rng, rng_w, rng_z, rng_b, rng_v, rng_k, rng_q = jax.random.split(rng, 7)
+    w = jax.random.normal(rng_w, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    z = jax.random.normal(rng_z, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    b = jax.random.normal(rng_b, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    v = jax.random.normal(rng_v, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    k = jax.random.normal(rng_k, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    q = jax.random.normal(rng_q, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+
+    # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
-
     loss_val, grads = jax.value_and_grad(compute_loss, argnums=0)(params, curr_S, y)
-
     grad_w, grad_z, grad_b, grad_v, grad_k, grad_q = grads
     print(f"Loss: {loss_val}")
     print(f"w: {grad_w.shape=}")
@@ -79,18 +79,14 @@ if __name__ == "__main__":
     print(f"k: {grad_k.shape=}")
     print(f"q: {grad_q.shape=}")
 
+    # RTRL (Real-Time Recurrent Learning)
     custum_f.defvjp(custum_fwd, custum_bwd)
-
     sensitivity_w = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_z = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_b = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_v = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_k = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_mats = (sensitivity_w, sensitivity_z, sensitivity_b, sensitivity_v, sensitivity_k)
-    carry = (curr_S, sensitivity_mats)
-
     for i in range(w.shape[0]):
-        print(f"{i=}")
         custum_f(curr_S, sensitivity_mats, w[i], z[i], b[i], v[i], k[i])
         grad = jax.grad(compute_loss2)(curr_S, sensitivity_mats, w[i], z[i], b[i], v[i], k[i])
-        exit(0)
