@@ -43,7 +43,7 @@ def compute_loss(params, init_S, y):
     sum_loss = 0
 
     for i in range(w.shape[0]):
-        curr_S = f(curr_S, w[i], z[i], b[i], v[i], k[i])
+        curr_S = f1(curr_S, w[i], z[i], b[i], v[i], k[i])
         curr_pred = curr_S @ q[i]
         curr_loss = jnp.mean((curr_pred - y[i]) ** 2)
         sum_loss += curr_loss
