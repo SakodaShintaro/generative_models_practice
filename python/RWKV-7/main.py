@@ -52,7 +52,7 @@ def f_impl(S, sensitivity_mats, w, z, b, v, k):
     # sx: (HEAD_NUM, HEAD_SIZE(w param), HEAD_SIZE(si), HEAD_SIZE(sj))
     sw = recursive(sw) + jnp.einsum("hij,pj->hpij", prev_S, identity)
     sz = recursive(sz) + jnp.einsum("hij,p,hj->hpij", prev_S, ones, b)
-    sb = recursive(sb) + jnp.einsum("hij,hi,p->hpij", prev_S, z, ones)
+    sb = recursive(sb) + jnp.einsum("hik,hk,pj->hpij", prev_S, z, identity)
     sv = recursive(sv) + jnp.einsum("pi,hj->hpij", identity, k)
     sk = recursive(sk) + jnp.einsum("hi,pj->hpij", v, identity)
 
