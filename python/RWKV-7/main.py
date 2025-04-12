@@ -67,13 +67,12 @@ def custum_f(S, sensitivity_mats, z, w, b, v, k):
 
 
 def custum_fwd(S, sensitivity_mats, w, z, b, v, k):
-    (S, sensitivity_mats), vjp_func = jax.vjp(f_impl, S, sensitivity_mats, w, z, b, v, k)
-    return (S, sensitivity_mats), (sensitivity_mats, w, z, b, v, k)
+    S, sensitivity_mats = f_impl(S, sensitivity_mats, w, z, b, v, k)
+    return (S, sensitivity_mats), sensitivity_mats
 
 
-def custum_bwd(res, g):
+def custum_bwd(sensitivity_mats, g):
     dL_dS, d_sensitivity_mats = g[0], g[1]
-    sensitivity_mats, w, z, b, v, k = res
 
     sw, sz, sb, sv, sk = sensitivity_mats
 
