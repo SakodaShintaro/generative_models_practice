@@ -84,22 +84,24 @@ def custum_bwd(res, g):
     return result
 
 
-def compute_loss(params, init_S, y):
+def compute_loss_bptt(params, init_S, y):
     curr_S = init_S
 
     sum_loss = 0
 
-    for i in range(w.shape[0]):
-        curr_S = f1(curr_S, w[i], z[i], b[i], v[i], k[i])
-        curr_pred = curr_S @ q[i]
-        curr_loss = jnp.mean((curr_pred - y[i]) ** 2)
+    w, z, b, v, k, q = params
+
+    for t in range(w.shape[0]):
+        curr_S = f1(curr_S, w[t], z[t], b[t], v[t], k[t])
+        curr_pred = curr_S @ q[t]
+        curr_loss = jnp.mean((curr_pred - y[t]) ** 2)
         sum_loss += curr_loss
 
     sum_loss /= w.shape[0]
     return sum_loss
 
 
-def compute_loss2(params, curr_S, sensitivity_mats, y):
+def compute_loss_rtrl(params, curr_S, sensitivity_mats, y):
     w, z, b, v, k, q = params
     curr_S, sensitivity_mats = custum_f(curr_S, sensitivity_mats, w, z, b, v, k)
     curr_pred = curr_S @ q
@@ -132,7 +134,7 @@ if __name__ == "__main__":
 
     # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
-    loss_val, grads = jax.value_and_grad(compute_loss, argnums=0)(params, curr_S, y)
+    loss_val, grads = jax.value_and_grad(compute_loss_bptt, argnums=0)(params, curr_S, y)
     grad_w, grad_z, grad_b, grad_v, grad_k, grad_q = grads
     print(f"Loss: {loss_val}")
     print(f"w: {grad_w.shape=}")
@@ -153,7 +155,7 @@ if __name__ == "__main__":
     sum_loss = 0
     for t in range(TIMESTEP):
         params = (w[t], z[t], b[t], v[t], k[t], q[t])
-        curr_loss, grad = jax.value_and_grad(compute_loss2, argnums=0)(
+        curr_loss, grad = jax.value_and_grad(compute_loss_rtrl, argnums=0)(
             params, curr_S, sensitivity_mats, y[t]
         )
         sum_loss += curr_loss / TIMESTEP
