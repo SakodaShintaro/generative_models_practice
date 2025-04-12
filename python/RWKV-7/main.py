@@ -4,9 +4,16 @@ import jax.numpy as jnp
 # ruff: noqa: ANN001, ANN201, ANN202, ANN204, ANN205, ERA001, N816
 
 
-def f(S, w, z, b, v, k):
-    S = S * w.mT - S @ z * b.mT + v * k.mT
-    return S
+def f1(S, w, z, b, v, k):
+    return S * w.mT + S @ z * b.mT + v * k.mT
+
+
+def f2(S, w, z, b, v, k):
+    return (
+        jnp.einsum("hij,hjk->hik", S, w)
+        + jnp.einsum("hij,hjk,hjl->hik", S, z, b)
+        + jnp.einsum("hij,hkj->hik", v, k)
+    )
 
 
 def f_impl(S, sensitivity_mats, w, z, b, v, k):
@@ -66,6 +73,10 @@ if __name__ == "__main__":
     v = jax.random.normal(rng_v, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     k = jax.random.normal(rng_k, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     q = jax.random.normal(rng_q, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+
+    S1 = f1(curr_S, w[0], z[0], b[0], v[0], k[0])
+    S2 = f2(curr_S, w[0], z[0], b[0], v[0], k[0])
+    assert jnp.allclose(S1, S2), "S1 and S2 are not equal"
 
     # BPTT (Backpropagation Through Time)
     params = (w, z, b, v, k, q)
