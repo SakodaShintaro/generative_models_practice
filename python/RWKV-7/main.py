@@ -29,14 +29,21 @@ def custum_bwd(res, g):
     return vjp_func(g)
 
 
-def compute_loss(params, init_S):
-    w, z, b, v, k = params
+def compute_loss(params, init_S, y):
+    w, z, b, v, k, q = params
     curr_S = init_S
+
+    sum_loss = 0
 
     for i in range(w.shape[0]):
         curr_S = f(curr_S, w[i], z[i], b[i], v[i], k[i])
+        curr_pred = curr_S @ q[i]
+        curr_loss = jnp.mean((curr_pred - y[i]) ** 2)
+        sum_loss += curr_loss
+        print(f"curr_loss: {curr_loss.item()}")
 
-    return jnp.mean(curr_S)
+    sum_loss /= w.shape[0]
+    return sum_loss
 
 
 def compute_loss2(curr_S, sensitivity_mats, w, z, b, v, k):
@@ -50,24 +57,27 @@ if __name__ == "__main__":
     TIMESTEP = 10
 
     rng = jax.random.PRNGKey(0)
-    curr_S = jax.random.normal(rng, (HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
+    curr_S = jnp.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE))
     w = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     z = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     b = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     v = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
     k = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    q = jax.random.normal(rng, (TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
+    y = jnp.ones((TIMESTEP, HEAD_NUM, HEAD_SIZE, 1))
 
-    params = (w, z, b, v, k)
+    params = (w, z, b, v, k, q)
 
-    loss_val, grads = jax.value_and_grad(compute_loss, argnums=0)(params, curr_S)
+    loss_val, grads = jax.value_and_grad(compute_loss, argnums=0)(params, curr_S, y)
 
-    grad_w, grad_z, grad_b, grad_v, grad_k = grads
+    grad_w, grad_z, grad_b, grad_v, grad_k, grad_q = grads
     print(f"Loss: {loss_val}")
     print(f"w: {grad_w.shape=}")
     print(f"z: {grad_z.shape=}")
     print(f"b: {grad_b.shape=}")
     print(f"v: {grad_v.shape=}")
     print(f"k: {grad_k.shape=}")
+    print(f"q: {grad_q.shape=}")
 
     custum_f.defvjp(custum_fwd, custum_bwd)
 
