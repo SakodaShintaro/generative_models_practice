@@ -85,7 +85,6 @@ def custum_bwd(res, g):
 
 
 def compute_loss(params, init_S, y):
-    w, z, b, v, k, q = params
     curr_S = init_S
 
     sum_loss = 0
@@ -100,9 +99,12 @@ def compute_loss(params, init_S, y):
     return sum_loss
 
 
-def compute_loss2(curr_S, sensitivity_mats, w, z, b, v, k):
+def compute_loss2(params, curr_S, sensitivity_mats, y):
+    w, z, b, v, k, q = params
     curr_S, sensitivity_mats = custum_f(curr_S, sensitivity_mats, w, z, b, v, k)
-    return jnp.mean(curr_S)
+    curr_pred = curr_S @ q
+    curr_loss = jnp.mean((curr_pred - y) ** 2)
+    return curr_loss
 
 
 if __name__ == "__main__":
@@ -148,6 +150,12 @@ if __name__ == "__main__":
     sensitivity_v = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_k = jax.numpy.zeros((HEAD_NUM, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE))
     sensitivity_mats = (sensitivity_w, sensitivity_z, sensitivity_b, sensitivity_v, sensitivity_k)
-    for i in range(w.shape[0]):
-        custum_f(curr_S, sensitivity_mats, w[i], z[i], b[i], v[i], k[i])
-        grad = jax.grad(compute_loss2)(curr_S, sensitivity_mats, w[i], z[i], b[i], v[i], k[i])
+    sum_loss = 0
+    for t in range(TIMESTEP):
+        params = (w[t], z[t], b[t], v[t], k[t], q[t])
+        curr_loss, grad = jax.value_and_grad(compute_loss2, argnums=0)(
+            params, curr_S, sensitivity_mats, y[t]
+        )
+        sum_loss += curr_loss / TIMESTEP
+        print(f"Loss: {curr_loss}")
+    print(f"Sum Loss: {sum_loss}")
