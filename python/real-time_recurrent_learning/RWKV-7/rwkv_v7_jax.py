@@ -1,4 +1,4 @@
-# https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_numpy.py
+# Reference) https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_numpy.py
 
 ########################################################################################################
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
