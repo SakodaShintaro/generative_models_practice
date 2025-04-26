@@ -3,9 +3,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select=["ALL"]
-extend-ignore=["D"]
+extend-ignore=["ANN", "D", "ERA", "N"]
 ignore=[
-    "ANN101",
     "COM812",
     "D103", "D104", "D105", "D107",
     "E741",
