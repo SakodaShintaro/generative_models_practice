@@ -1,0 +1,6 @@
+numpy==1.25
+jax[cuda12]==0.5.2
+flax==0.10.2
+distrax==0.1.2
+optax==0.2.4
+wandb
