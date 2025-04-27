@@ -14,7 +14,7 @@ from flax.training import train_state
 from flax.typing import Dtype, Initializer
 
 SEQ_LEN = 10
-INPUT_DIM = 10
+INPUT_DIM = 9
 
 
 def print_dict_tree(d, indent=0):
@@ -239,7 +239,7 @@ if __name__ == "__main__":
         apply_fn=model_rtrl.apply, params=params_rtrl, tx=optax.adam(1e-2)
     )
 
-    STEP_NUM = 1000
+    STEP_NUM = 4000
 
     # BPTT
     print("BPTT")
