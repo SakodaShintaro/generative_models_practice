@@ -209,7 +209,8 @@ if __name__ == "__main__":
     np.random.seed(SEED)
     rng_key = jax.random.PRNGKey(SEED)
 
-    batch_size = 16
+    train_batch_size = 1
+    valid_batch_size = 100
     hidden_size = INPUT_DIM - 1
 
     # JAXのPRNGキーを分割して使用
@@ -221,13 +222,13 @@ if __name__ == "__main__":
 
     params_bptt = model_bptt.init(
         init_key,
-        model_bptt.initialize_carry(batch_size, hidden_size),
-        jnp.ones((batch_size, INPUT_DIM)),
+        model_bptt.initialize_carry(train_batch_size, hidden_size),
+        jnp.ones((train_batch_size, INPUT_DIM)),
     )
     params_rtrl = model_rtrl.init(
         init_key,
-        model_rtrl.initialize_carry(batch_size, hidden_size, INPUT_DIM),
-        jnp.ones((batch_size, INPUT_DIM)),
+        model_rtrl.initialize_carry(train_batch_size, hidden_size, INPUT_DIM),
+        jnp.ones((train_batch_size, INPUT_DIM)),
     )
 
     # 訓練状態の作成
@@ -244,8 +245,8 @@ if __name__ == "__main__":
     print("BPTT")
     loss_list = []
     for i in range(1, STEP_NUM + 1):
-        batch_x, batch_y, mask = make_data(batch_size)
-        carry = model_bptt.initialize_carry(batch_size, hidden_size)
+        batch_x, batch_y, mask = make_data(train_batch_size)
+        carry = model_bptt.initialize_carry(train_batch_size, hidden_size)
         loss, grads = bptt_grads(state_bptt, carry, batch_x, batch_y, mask)
         state_bptt = state_bptt.apply_gradients(grads=grads)
         loss_list.append(loss.item())
@@ -256,7 +257,8 @@ if __name__ == "__main__":
             print(f"{i:08d} {loss_avg:.5f} {loss_std:.5f}")
 
     # 確認
-    initial_carry = model_bptt.initialize_carry(batch_size, hidden_size)
+    batch_x, batch_y, mask = make_data(valid_batch_size)
+    initial_carry = model_bptt.initialize_carry(valid_batch_size, hidden_size)
     step_fn = partial(state_bptt.apply_fn, state_bptt.params)
     _, y_pred = jax.lax.scan(step_fn, initial_carry, batch_x)
     y_pred_int = jnp.argmax(y_pred, axis=-1)
@@ -275,9 +277,9 @@ if __name__ == "__main__":
 
     loss_list = []
     for i in range(1, STEP_NUM + 1):
-        batch_x, batch_y, mask = make_data(batch_size)
+        batch_x, batch_y, mask = make_data(train_batch_size)
         loss = 0.0
-        carry = model_rtrl.initialize_carry(batch_size, hidden_size, INPUT_DIM)
+        carry = model_rtrl.initialize_carry(train_batch_size, hidden_size, INPUT_DIM)
         for j in range(SEQ_LEN):
             x_t = batch_x[j]
             y_t_ref = batch_y[j]
@@ -298,8 +300,8 @@ if __name__ == "__main__":
             print(f"{i:08d} {loss_avg:.5f} {loss_std:.5f}")
 
     # 確認
-    batch_x, batch_y, mask = make_data(batch_size)
-    carry = model_rtrl.initialize_carry(batch_size, hidden_size, INPUT_DIM)
+    batch_x, batch_y, mask = make_data(valid_batch_size)
+    carry = model_rtrl.initialize_carry(valid_batch_size, hidden_size, INPUT_DIM)
     equal_num = 0
     for j in range(SEQ_LEN):
         x_t = batch_x[j]
@@ -308,5 +310,5 @@ if __name__ == "__main__":
         if j >= SEQ_LEN // 2:
             y_t_int = jnp.argmax(y_t, axis=-1)
             equal_num += jnp.sum(jnp.equal(y_t_int, y_t_ref)).item()
-    acc = equal_num / (SEQ_LEN // 2 * batch_size) * 100
+    acc = equal_num / (SEQ_LEN // 2 * valid_batch_size) * 100
     print(f"{acc=:5.1f}%")
