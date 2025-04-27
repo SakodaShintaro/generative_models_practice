@@ -94,13 +94,9 @@ class RtrlCell(nn.Module):
         (S_R, S_W, S_B) = prev_sensitivity_matrices
         d_s = self.dtanh(prev_s)
         eye = jnp.eye(hidden_size)
-        S_W = jnp.einsum("bi,jk->bkij", x, eye) + jnp.einsum(
-            "nk,bn,bnij->bkij", R, d_s, S_W
-        )
+        S_W = jnp.einsum("bi,jk->bkij", x, eye) + jnp.einsum("nk,bn,bnij->bkij", R, d_s, S_W)
         S_B = eye[None, :, :] + jnp.einsum("nk,bn,bnj->bkj", R, d_s, S_B)
-        S_R = jnp.einsum("bi,jk->bkij", prev_h, eye) + jnp.einsum(
-            "nk,bn,bnij->bkij", R, d_s, S_R
-        )
+        S_R = jnp.einsum("bi,jk->bkij", prev_h, eye) + jnp.einsum("nk,bn,bnij->bkij", R, d_s, S_R)
         S_W = jax.lax.stop_gradient(S_W)
         S_B = jax.lax.stop_gradient(S_B)
         S_R = jax.lax.stop_gradient(S_R)
@@ -213,7 +209,7 @@ if __name__ == "__main__":
     np.random.seed(SEED)
     rng_key = jax.random.PRNGKey(SEED)
 
-    batch_size = 32
+    batch_size = 16
     hidden_size = INPUT_DIM - 1
 
     # JAXのPRNGキーを分割して使用
@@ -264,11 +260,12 @@ if __name__ == "__main__":
     step_fn = partial(state_bptt.apply_fn, state_bptt.params)
     _, y_pred = jax.lax.scan(step_fn, initial_carry, batch_x)
     y_pred_int = jnp.argmax(y_pred, axis=-1)
-    acc = jnp.mean(jnp.equal(y_pred_int[SEQ_LEN // 2:], batch_y[SEQ_LEN // 2:])).item()
-    print(f"{acc=}")
+    acc = jnp.mean(jnp.equal(y_pred_int[SEQ_LEN // 2 :], batch_y[SEQ_LEN // 2 :])).item() * 100
+    print(f"{acc=:5.1f}%")
 
     # RTRL
     print("RTRL")
+
     @jax.jit
     def step_loss_fn(params, carry, x_t, y_t_ref):
         carry, out = state_rtrl.apply_fn(params, carry, x_t)
@@ -287,9 +284,9 @@ if __name__ == "__main__":
             if j < SEQ_LEN // 2:
                 carry, y_t = model_rtrl.apply(state_rtrl.params, carry, x_t)
             else:
-                (curr_loss, carry), grads = jax.value_and_grad(
-                    step_loss_fn, has_aux=True
-                )(state_rtrl.params, carry, x_t, y_t_ref)
+                (curr_loss, carry), grads = jax.value_and_grad(step_loss_fn, has_aux=True)(
+                    state_rtrl.params, carry, x_t, y_t_ref
+                )
                 state_rtrl = state_rtrl.apply_gradients(grads=grads)
                 loss += curr_loss.item()
 
@@ -311,5 +308,5 @@ if __name__ == "__main__":
         if j >= SEQ_LEN // 2:
             y_t_int = jnp.argmax(y_t, axis=-1)
             equal_num += jnp.sum(jnp.equal(y_t_int, y_t_ref)).item()
-    acc = equal_num / (SEQ_LEN // 2 * batch_size)
-    print(f"{acc=}")
+    acc = equal_num / (SEQ_LEN // 2 * batch_size) * 100
+    print(f"{acc=:5.1f}%")
