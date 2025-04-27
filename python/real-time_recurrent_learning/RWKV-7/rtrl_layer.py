@@ -86,8 +86,7 @@ def make_data(batch_size, seq_len, input_dim):
 if __name__ == "__main__":
     HEAD_NUM = 2
     HEAD_SIZE = 8
-    TIMESTEP = 10
-    INPUT_DIM = 9
+    INPUT_DIM = 10
     SEQ_LEN = 10
     STEP_NUM = 1000
 
