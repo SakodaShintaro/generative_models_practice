@@ -24,6 +24,7 @@ from torchvision.utils import save_image
 # the first flag below was False when we tested this script but True makes training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+IMAGE_SIZE = 96
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -33,7 +34,6 @@ torch.backends.cudnn.allow_tf32 = True
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-S/2")
-    parser.add_argument("--image_size", type=int, default=128)
     parser.add_argument("--num_classes", type=int, default=10)
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--results_dir", type=Path, default="results")
@@ -70,7 +70,7 @@ def sample_images(
     vae: AutoencoderKL,
     args: argparse.Namespace,
 ) -> torch.Tensor:
-    latent_size = image_size // 8
+    latent_size = IMAGE_SIZE // 8
     num_classes = args.num_classes
     device = model.parameters().__next__().device
 
@@ -164,9 +164,8 @@ if __name__ == "__main__":
     logger.info(f"Experiment directory created at {results_dir}")
 
     # Create model:
-    image_size = args.image_size
-    assert image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = image_size // 8
+    assert IMAGE_SIZE % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+    latent_size = IMAGE_SIZE // 8
     ckpt = torch.load(args.ckpt) if args.ckpt is not None else None
     model = DiT_models[args.model](
         input_size=latent_size,
@@ -192,7 +191,6 @@ if __name__ == "__main__":
     # Setup data:
     transform = transforms.Compose(
         [
-            transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ],
