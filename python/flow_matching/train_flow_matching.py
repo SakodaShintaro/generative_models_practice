@@ -12,6 +12,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 from time import time
+from torchvision.datasets import STL10
 
 import torch
 from diffusers.models import AutoencoderKL
@@ -43,7 +44,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--ckpt_every", type=int, default=500)
     parser.add_argument("--ckpt", type=Path, default=None)
-    parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "stl10"])
     parser.add_argument("--cfg_scale", type=float, default=4.0)
     parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
     return parser.parse_args()
@@ -197,27 +197,8 @@ if __name__ == "__main__":
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ],
     )
-    dataset = None
-    if args.dataset == "mnist":
-        from torchvision.datasets import MNIST
 
-        transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Lambda(lambda x: x.repeat(3, 1, 1)),  # 1chのMNISTを3chに変換
-                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
-            ],
-        )
-        dataset = MNIST(args.data_path, train=True, transform=transform, download=True)
-    elif args.dataset == "cifar10":
-        from torchvision.datasets import CIFAR10
-
-        dataset = CIFAR10(args.data_path, train=True, transform=transform, download=True)
-    elif args.dataset == "stl10":
-        from torchvision.datasets import STL10
-
-        dataset = STL10(args.data_path, split="train", transform=transform, download=True)
+    dataset = STL10(args.data_path, split="train", transform=transform, download=True)
 
     loader = DataLoader(
         dataset,

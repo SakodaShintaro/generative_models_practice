@@ -4,7 +4,6 @@ set -eux
 cd $(dirname $0)
 
 uv run python train_flow_matching.py \
-    --dataset="stl10" \
     --epochs=3000 \
     --image_size=64 \
     --batch_size=500 \
