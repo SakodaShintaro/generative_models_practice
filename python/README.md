@@ -1,5 +1,9 @@
 # 準備
 
-python3 -m venv .env
-source .env/bin/activate
-pip3 install -r requirements.txt
+[uv](https://docs.astral.sh/uv/) をインストールしておく。
+
+```bash
+uv sync
+```
+
+各サブディレクトリの `train.sh` などは `uv run` 経由で実行される。

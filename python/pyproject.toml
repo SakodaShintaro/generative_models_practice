@@ -1,3 +1,20 @@
+[project]
+name = "generative-models-practice"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python",
+    "torch",
+    "torchvision",
+    "timm",
+    "diffusers",
+    "accelerate",
+    "numpy",
+]
+
+[tool.uv]
+package = false
+
 [tool.ruff]
 line-length = 100
 

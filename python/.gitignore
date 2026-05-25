@@ -7,3 +7,4 @@ events.*
 _METADATA
 checkpoint
 .env
+.venv/
