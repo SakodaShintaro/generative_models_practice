@@ -42,7 +42,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--ckpt", type=Path, default=None)
-    parser.add_argument("--cfg_scale", type=float, default=4.0)
     parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
     return parser.parse_args()
 
@@ -73,17 +72,12 @@ def sample_images(
     device = model.parameters().__next__().device
 
     # Labels to condition the model with (feel free to change):
-    class_labels = list(range(num_classes))
+    class_labels = [num_classes for _ in range(20)]
 
     # Create sampling noise:
     n = len(class_labels)
     z = torch.randn(n, 4, latent_size, latent_size, device=device)
     y = torch.tensor(class_labels, device=device)
-
-    # add null
-    z = torch.cat([z, z], 0)
-    y_null = torch.tensor([num_classes] * n, device=device)
-    y = torch.cat([y, y_null], 0)
 
     sample_n = args.nfe
 
@@ -92,8 +86,7 @@ def sample_images(
         for i in range(sample_n):
             num_t = i / sample_n * (1 - eps) + eps
             t = torch.ones(n, device=device) * num_t
-            t = torch.cat([t, t], 0)
-            pred = model.forward_with_cfg(z, t * 999, y, args.cfg_scale)
+            pred = model.forward(z, t * 999, y)
 
             z = z.detach().clone() + pred * dt
 
@@ -220,6 +213,7 @@ if __name__ == "__main__":
     start_time = time()
 
     eps = 0.001
+    save_ckpt(model, ema, opt, args, 0)
 
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
