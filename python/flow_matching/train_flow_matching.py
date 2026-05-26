@@ -104,7 +104,7 @@ def save_ckpt(
     results_dir = args.results_dir
     checkpoint_dir = results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = f"{checkpoint_dir}/{train_steps:08d}.pt"
+    checkpoint_path = f"{checkpoint_dir}/latest.pt"
     checkpoint = {
         "model": model.state_dict(),
         "ema": ema.state_dict(),
