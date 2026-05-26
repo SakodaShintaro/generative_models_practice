@@ -26,8 +26,8 @@ from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 IMAGE_SIZE = 64
-MODEL_TYPE = "flow_matching"
-# MODEL_TYPE = "mean_flow"
+# MODEL_TYPE = "flow_matching"
+MODEL_TYPE = "mean_flow"
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -261,7 +261,11 @@ if __name__ == "__main__":
                 t = t.view(-1, 1, 1, 1)
                 r = r.view(-1, 1, 1, 1)
                 u_target = v - (t - r) * du_dt
-                loss = torch.mean(torch.square(u - u_target.detach()))
+                # Adaptive loss weighting from MeanFlow paper:
+                # without it (t-r)·du/dt self-amplifies and training diverges.
+                delta_sq = (u - u_target.detach()).pow(2)
+                w = 1.0 / (delta_sq.detach().mean(dim=(1, 2, 3), keepdim=True) + 1e-3)
+                loss = (w * delta_sq).mean()
 
             opt.zero_grad()
             loss.backward()
