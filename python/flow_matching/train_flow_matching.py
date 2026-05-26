@@ -250,29 +250,26 @@ if __name__ == "__main__":
             # Log loss values:
             running_loss += loss.item()
             log_steps += 1
-        if epoch % args.log_every == 0:
+        if (epoch + 1) % args.log_every == 0:
             # Measure training speed:
             torch.cuda.synchronize()
             end_time = time()
-            steps_per_sec = log_steps / (end_time - start_time)
+            elapsed_sec = int(end_time - start_time)
+            elapsed_min = elapsed_sec // 60
+            elapsed_sec = elapsed_sec % 60
             # Reduce loss history over all processes:
             avg_loss = torch.tensor(running_loss / log_steps, device=device)
             avg_loss = avg_loss.item()
             logger.info(
-                f"(epoch={epoch:07d}) "
+                f"(epoch={epoch + 1:07d}) "
                 f"Train Loss: {avg_loss:.4f}, "
-                f"Train Steps/Sec: {steps_per_sec:.2f}",
+                f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec:02d}",
             )
             # Reset monitoring variables:
             running_loss = 0
             log_steps = 0
-            start_time = time()
 
         # Save DiT checkpoint:
-        if epoch % args.ckpt_every == 0:
+        if (epoch + 1) % args.ckpt_every == 0:
             save_ckpt(model, ema, opt, args, epoch)
             model.train()
-
-    # Save final checkpoint:
-    save_ckpt(model, ema, opt, args, args.epochs)
-    logger.info("Done!")
