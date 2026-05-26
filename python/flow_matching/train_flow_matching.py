@@ -238,10 +238,13 @@ if __name__ == "__main__":
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             noise = torch.randn_like(x)
-            t = torch.rand(x.shape[0], device=device) * (1 - eps) + eps
-            r = torch.rand(x.shape[0], device=device) * (1 - eps) + eps
-            r, t = torch.min(r, t), torch.max(r, t)  # Ensure r < t
-            fm_mask = torch.rand(x.shape[0], device=device) < 0.5
+            # Logit-normal time sampling (MeanFlow paper recommendation): biases t toward
+            # smaller values where modelling is harder. μ=-0.4, σ=1.0 from the reference.
+            normal_samples = torch.randn(x.shape[0], 2, device=device) * 1.0 + (-0.4)
+            time_samples = torch.sigmoid(normal_samples)
+            r, t = time_samples.min(dim=1).values, time_samples.max(dim=1).values
+            # r=t for 25% of samples (paper-recommended; was 50%).
+            fm_mask = torch.rand(x.shape[0], device=device) < 0.25
             r = torch.where(fm_mask, t, r)
             t = t.view(-1, 1, 1, 1)
             r = r.view(-1, 1, 1, 1)
@@ -279,6 +282,7 @@ if __name__ == "__main__":
 
             opt.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             update_ema(ema, model)
 
