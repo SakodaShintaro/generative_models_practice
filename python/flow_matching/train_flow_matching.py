@@ -187,7 +187,12 @@ if __name__ == "__main__":
     logger.info(f"{MODEL_TYPE} Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer
-    opt = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0)
+    opt = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        betas=(0.9, 0.95),
+        weight_decay=0,
+    )
     if ckpt is not None:
         opt.load_state_dict(ckpt["opt"])
 
