@@ -386,10 +386,12 @@ class MiT(nn.Module):
         y: (N,) tensor of class labels
         """
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
-        t = self.t_embedder(t)  # (N, D)
-        r = self.r_embedder(r)  # (N, D)
+        t_emb = self.t_embedder(t)  # (N, D)
+        # Embed the gap (t - r) rather than r itself: gives a clean boundary at r=t,
+        # where the gap embedding is always r_embedder(0).
+        r_emb = self.r_embedder(t - r)  # (N, D)
         y = self.y_embedder(y, self.training)  # (N, D)
-        c = t + r + y  # (N, D)
+        c = t_emb + r_emb + y  # (N, D)
         for block in self.blocks:
             x = block(x, c)  # (N, T, D)
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
