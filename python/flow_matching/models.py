@@ -42,16 +42,10 @@ class TimestepEmbedder(nn.Module):
 
     @staticmethod
     def timestep_embedding(t, dim):
-        """
-        t in [0, 1]. freq_min, freq_max are the lowest/highest angular frequencies.
-        """
         half = dim // 2
-        freq_min = 1.0
-        freq_max = 1000.0
-        # 対数スケールで freq_min から freq_max までを half 個に分割
-        freqs = torch.exp(torch.linspace(math.log(freq_min), math.log(freq_max), half)).to(
-            device=t.device
-        )
+        freqs = torch.exp(
+            -math.log(10000) * torch.arange(start=0, end=half, dtype=torch.float32) / half,
+        ).to(device=t.device)
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
