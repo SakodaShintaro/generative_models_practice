@@ -27,6 +27,9 @@ from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 IMAGE_SIZE = 64
+EPS = 0.001
+SAMPLE_NFES = (1, 10)
+NUM_SAMPLES = 10
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -43,7 +46,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--ckpt", type=Path, default=None)
-    parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
     parser.add_argument("--model_type", choices=["flow_matching", "mean_flow"], default="mean_flow")
     parser.add_argument("--dataset", choices=["stl10", "mnist"], default="stl10")
     return parser.parse_args()
@@ -66,39 +68,54 @@ def requires_grad(model: torch.nn.Module, flag: bool) -> None:
 
 
 @torch.no_grad()
+def _generate(
+    model: torch.nn.Module,
+    z_init: torch.Tensor,
+    y: torch.Tensor,
+    model_type: str,
+    nfe: int,
+) -> torch.Tensor:
+    n = z_init.shape[0]
+    device = z_init.device
+    z = z_init.clone()
+    if model_type == "flow_matching":
+        dt = 1.0 / nfe
+        for i in range(nfe):
+            num_t = 1 - (i / nfe * (1 - EPS) + EPS)
+            t = torch.full((n,), num_t, device=device)
+            pred = model(z, t, y)
+            z = z - pred * dt
+    elif model_type == "mean_flow":
+        # Sample from t=1 down to t=0 in `nfe` linear segments. Each step jumps
+        # z_r = z_t - (t - r) * u(z_t, t, r).
+        time_steps = torch.linspace(1.0, 0.0, nfe + 1, device=device)
+        for i in range(nfe):
+            t_cur = time_steps[i].item()
+            t_next = time_steps[i + 1].item()
+            t = torch.full((n,), t_cur, device=device)
+            r = torch.full((n,), t_next, device=device)
+            pred = model(z, t, r, y)
+            z = z - (t_cur - t_next) * pred
+    return z
+
+
+@torch.no_grad()
 def sample_images(
     model: torch.nn.Module,
     vae: AutoencoderKL,
     args: argparse.Namespace,
 ) -> torch.Tensor:
+    """Generate NUM_SAMPLES images at each NFE in SAMPLE_NFES from the same noise,
+    stacked so each column shares its initial noise and each row corresponds to one NFE.
+    """
     latent_size = IMAGE_SIZE // 8
-    num_classes = args.num_classes
     device = model.parameters().__next__().device
 
-    # Labels to condition the model with (feel free to change):
-    class_labels = [num_classes for _ in range(20)]
+    z_init = torch.randn(NUM_SAMPLES, 4, latent_size, latent_size, device=device)
+    y = torch.full((NUM_SAMPLES,), args.num_classes, device=device)
 
-    # Create sampling noise:
-    n = len(class_labels)
-    z = torch.randn(n, 4, latent_size, latent_size, device=device)
-    y = torch.tensor(class_labels, device=device)
-
-    if args.model_type == "flow_matching":
-        sample_n = args.nfe
-        dt = 1.0 / sample_n
-        for i in range(sample_n):
-            num_t = 1 - (i / sample_n * (1 - eps) + eps)
-            t = torch.ones(n, device=device) * num_t
-            pred = model.forward(z, t, y)
-            z = z.detach().clone() - pred * dt
-
-    elif args.model_type == "mean_flow":
-        t = torch.ones(n, device=device)
-        r = torch.zeros_like(t)
-        pred = model.forward(z, t, r, y)
-        z = z.detach().clone() - pred
-
-    z = torch.split(z, n, dim=0)[0]
+    rows = [_generate(model, z_init, y, args.model_type, nfe) for nfe in SAMPLE_NFES]
+    z = torch.cat(rows, dim=0)
     return vae.decode(z / 0.18215).sample
 
 
@@ -127,7 +144,7 @@ def save_ckpt(
     save_image(
         samples,
         sample_dir / f"{train_steps:08d}.png",
-        nrow=4,
+        nrow=NUM_SAMPLES,
         normalize=True,
         value_range=(-1, 1),
     )
@@ -245,7 +262,6 @@ if __name__ == "__main__":
     # Variables for monitoring/logging purposes:
     start_time = time()
 
-    eps = 0.001
     save_ckpt(model, ema, opt, args, 0)
 
     logger.info(f"Training for {args.epochs} epochs...")
