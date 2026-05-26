@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import STL10
 from torchvision.utils import save_image
+from tqdm import tqdm
 
 # the first flag below was False when we tested this script but True makes training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -199,7 +200,7 @@ if __name__ == "__main__":
         ],
     )
 
-    dataset = STL10(args.data_path, split="train", transform=transform, download=True)
+    dataset = STL10(args.data_path, split="unlabeled", transform=transform, download=True)
 
     loader = DataLoader(
         dataset,
@@ -225,7 +226,7 @@ if __name__ == "__main__":
     for epoch in range(args.epochs):
         log_steps = 0
         running_loss = 0
-        for x, y in loader:
+        for x, y in tqdm(loader, desc=f"Epoch {epoch + 1}/{args.epochs}"):
             x = x.to(device)
             y = y.to(device)
             # -1であるラベルはclass_numに変換する
