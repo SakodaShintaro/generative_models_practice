@@ -12,19 +12,19 @@ from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 from time import time
-from torchvision.datasets import STL10
 
 import torch
 from diffusers.models import AutoencoderKL
-from models import DiT_models
+from models import DiT
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.datasets import STL10
 from torchvision.utils import save_image
 
 # the first flag below was False when we tested this script but True makes training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-IMAGE_SIZE = 96
+IMAGE_SIZE = 64
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -33,7 +33,6 @@ IMAGE_SIZE = 96
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-S/2")
     parser.add_argument("--num_classes", type=int, default=10)
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--results_dir", type=Path, default="results")
@@ -59,7 +58,7 @@ def update_ema(ema_model: torch.nn.Module, model: torch.nn.Module, decay: float 
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
 
 
-def requires_grad(model: torch.nn.Module, flag: bool) -> None:  # noqa: FBT001
+def requires_grad(model: torch.nn.Module, flag: bool) -> None:
     """Set requires_grad flag for all parameters in a model."""
     for p in model.parameters():
         p.requires_grad = flag
@@ -167,7 +166,11 @@ if __name__ == "__main__":
     assert IMAGE_SIZE % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = IMAGE_SIZE // 8
     ckpt = torch.load(args.ckpt) if args.ckpt is not None else None
-    model = DiT_models[args.model](
+    model = DiT(
+        depth=12,
+        hidden_size=384,
+        patch_size=2,
+        num_heads=6,
         input_size=latent_size,
         num_classes=args.num_classes,
         learn_sigma=False,
@@ -191,6 +194,7 @@ if __name__ == "__main__":
     # Setup data:
     transform = transforms.Compose(
         [
+            transforms.Resize(IMAGE_SIZE),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ],

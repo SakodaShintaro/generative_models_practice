@@ -1,4 +1,15 @@
 {
     "cmake.buildDirectory": "${workspaceFolder}/build-${buildType}",
-    "python.envFile": "${workspaceFolder}/python/.env"
+    "python.envFile": "${workspaceFolder}/python/.env",
+    "python.defaultInterpreterPath": "${workspaceFolder}/python/.venv/bin/python",
+    "ruff.interpreter": ["${workspaceFolder}/python/.venv/bin/python"],
+    "ruff.importStrategy": "fromEnvironment",
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    }
 }

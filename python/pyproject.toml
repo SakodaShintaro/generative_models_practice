@@ -15,6 +15,11 @@ dependencies = [
 [tool.uv]
 package = false
 
+[dependency-groups]
+dev = [
+    "ruff",
+]
+
 [tool.ruff]
 line-length = 100
 
