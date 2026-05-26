@@ -26,8 +26,8 @@ from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 IMAGE_SIZE = 64
-# MODEL_TYPE = "flow_matching"
-MODEL_TYPE = "mean_flow"
+MODEL_TYPE = "flow_matching"
+# MODEL_TYPE = "mean_flow"
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -88,13 +88,13 @@ def sample_images(
         for i in range(sample_n):
             num_t = 1 - (i / sample_n * (1 - eps) + eps)
             t = torch.ones(n, device=device) * num_t
-            pred = model.forward(z, t * 999, y)
+            pred = model.forward(z, t, y)
             z = z.detach().clone() - pred * dt
 
     elif MODEL_TYPE == "mean_flow":
         t = torch.ones(n, device=device)
         r = torch.zeros_like(t)
-        pred = model.forward(z, t * 999, r * 999, y)
+        pred = model.forward(z, t, r, y)
         z = z.detach().clone() - pred
 
     z = torch.split(z, n, dim=0)[0]
@@ -249,18 +249,18 @@ if __name__ == "__main__":
             v = noise - x
 
             if MODEL_TYPE == "flow_matching":
-                out = model(perturbed_data, t * 999, y)
+                out = model(perturbed_data, t, y)
                 loss = torch.mean(torch.square(out - v))
             elif MODEL_TYPE == "mean_flow":
 
                 def f(x, t_):
-                    return model(x, t_ * 999, r * 999, y)
+                    return model(x, t_, r, y)
 
                 with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
                     u, du_dt = torch.func.jvp(f, (perturbed_data, t), (v, torch.ones_like(t)))
                 t = t.view(-1, 1, 1, 1)
                 r = r.view(-1, 1, 1, 1)
-                u_target = v - (t - r) * du_dt / 999
+                u_target = v - (t - r) * du_dt
                 loss = torch.mean(torch.square(u - u_target.detach()))
 
             opt.zero_grad()
