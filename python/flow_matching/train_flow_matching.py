@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--results_dir", type=Path, default="results")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--ckpt", type=Path, default=None)
