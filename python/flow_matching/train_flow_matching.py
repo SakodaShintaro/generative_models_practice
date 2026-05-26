@@ -15,7 +15,7 @@ from time import time
 
 import torch
 from diffusers.models import AutoencoderKL
-from models import DiT
+from models import DiT, MiT
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import STL10
@@ -26,6 +26,8 @@ from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 IMAGE_SIZE = 64
+# MODEL_TYPE = "flow_matching"
+MODEL_TYPE = "mean_flow"
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -62,6 +64,7 @@ def requires_grad(model: torch.nn.Module, flag: bool) -> None:
         p.requires_grad = flag
 
 
+@torch.no_grad()
 def sample_images(
     model: torch.nn.Module,
     vae: AutoencoderKL,
@@ -79,19 +82,23 @@ def sample_images(
     z = torch.randn(n, 4, latent_size, latent_size, device=device)
     y = torch.tensor(class_labels, device=device)
 
-    sample_n = args.nfe
-
-    with torch.no_grad():
+    if MODEL_TYPE == "flow_matching":
+        sample_n = args.nfe
         dt = 1.0 / sample_n
         for i in range(sample_n):
             num_t = 1 - (i / sample_n * (1 - eps) + eps)
             t = torch.ones(n, device=device) * num_t
             pred = model.forward(z, t * 999, y)
-
             z = z.detach().clone() - pred * dt
 
-        z = torch.split(z, n, dim=0)[0]
-        return vae.decode(z / 0.18215).sample
+    elif MODEL_TYPE == "mean_flow":
+        t = torch.ones(n, device=device)
+        r = torch.zeros_like(t)
+        pred = model.forward(z, t * 999, r * 999, y)
+        z = z.detach().clone() - pred
+
+    z = torch.split(z, n, dim=0)[0]
+    return vae.decode(z / 0.18215).sample
 
 
 def save_ckpt(
@@ -158,7 +165,8 @@ if __name__ == "__main__":
     assert IMAGE_SIZE % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = IMAGE_SIZE // 8
     ckpt = torch.load(args.ckpt) if args.ckpt is not None else None
-    model = DiT(
+    model_class = DiT if MODEL_TYPE == "flow_matching" else MiT
+    model = model_class(
         depth=12,
         hidden_size=384,
         patch_size=2,
@@ -176,7 +184,7 @@ if __name__ == "__main__":
     requires_grad(ema, flag=False)
     model = model.to(device)
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
-    logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    logger.info(f"{MODEL_TYPE} Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer
     opt = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0)
@@ -229,12 +237,32 @@ if __name__ == "__main__":
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             noise = torch.randn_like(x)
             t = torch.rand(x.shape[0], device=device) * (1 - eps) + eps
+            r = torch.rand(x.shape[0], device=device) * (1 - eps) + eps
+            r, t = torch.min(r, t), torch.max(r, t)  # Ensure r < t
+            fm_mask = torch.rand(x.shape[0], device=device) < 0.5
+            r = torch.where(fm_mask, t, r)
             t = t.view(-1, 1, 1, 1)
+            r = r.view(-1, 1, 1, 1)
             perturbed_data = (1 - t) * x + t * noise
             t = t.squeeze()
-            out = model(perturbed_data, t * 999, y)
-            target = noise - x
-            loss = torch.mean(torch.square(out - target))
+            r = r.squeeze()
+            v = noise - x
+
+            if MODEL_TYPE == "flow_matching":
+                out = model(perturbed_data, t * 999, y)
+                loss = torch.mean(torch.square(out - v))
+            elif MODEL_TYPE == "mean_flow":
+
+                def f(x, t_):
+                    return model(x, t_ * 999, r * 999, y)
+
+                with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+                    u, du_dt = torch.func.jvp(f, (perturbed_data, t), (v, torch.ones_like(t)))
+                t = t.view(-1, 1, 1, 1)
+                r = r.view(-1, 1, 1, 1)
+                u_target = v - (t - r) * du_dt / 999
+                loss = torch.mean(torch.square(u - u_target.detach()))
+
             opt.zero_grad()
             loss.backward()
             opt.step()
