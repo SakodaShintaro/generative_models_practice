@@ -84,11 +84,11 @@ def sample_images(
     with torch.no_grad():
         dt = 1.0 / sample_n
         for i in range(sample_n):
-            num_t = i / sample_n * (1 - eps) + eps
+            num_t = 1 - (i / sample_n * (1 - eps) + eps)
             t = torch.ones(n, device=device) * num_t
             pred = model.forward(z, t * 999, y)
 
-            z = z.detach().clone() + pred * dt
+            z = z.detach().clone() - pred * dt
 
         z = torch.split(z, n, dim=0)[0]
         return vae.decode(z / 0.18215).sample
@@ -230,10 +230,10 @@ if __name__ == "__main__":
             noise = torch.randn_like(x)
             t = torch.rand(x.shape[0], device=device) * (1 - eps) + eps
             t = t.view(-1, 1, 1, 1)
-            perturbed_data = t * x + (1 - t) * noise
+            perturbed_data = (1 - t) * x + t * noise
             t = t.squeeze()
             out = model(perturbed_data, t * 999, y)
-            target = x - noise
+            target = noise - x
             loss = torch.mean(torch.square(out - target))
             opt.zero_grad()
             loss.backward()
