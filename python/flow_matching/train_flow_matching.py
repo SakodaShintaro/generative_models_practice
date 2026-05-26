@@ -7,6 +7,7 @@
 """A minimal training script for DiT."""
 
 import argparse
+import csv
 import logging
 from collections import OrderedDict
 from copy import deepcopy
@@ -217,6 +218,13 @@ if __name__ == "__main__":
     )
     logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
 
+    # CSV metrics output: one row per epoch.
+    metrics_path = results_dir / "metrics.csv"
+    metrics_file = metrics_path.open("w", newline="")
+    metrics_writer = csv.writer(metrics_file)
+    metrics_writer.writerow(["epoch", "train_loss", "fm_mse", "du_dt", "elapsed_sec"])
+    metrics_file.flush()
+
     # Prepare models for training:
     update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
     model.train()  # important! This enables embedding dropout for classifier-free guidance
@@ -300,9 +308,9 @@ if __name__ == "__main__":
         # Measure training speed:
         torch.cuda.synchronize()
         end_time = time()
-        elapsed_sec = int(end_time - start_time)
-        elapsed_min = elapsed_sec // 60
-        elapsed_sec = elapsed_sec % 60
+        total_elapsed_sec = int(end_time - start_time)
+        elapsed_min = total_elapsed_sec // 60
+        elapsed_sec_in_min = total_elapsed_sec % 60
         # Reduce loss history over all processes:
         avg_loss = running_loss / log_steps
         avg_fm_mse = running_fm_mse / log_steps
@@ -312,8 +320,13 @@ if __name__ == "__main__":
             f"Train Loss: {avg_loss:.4f}, "
             f"FM MSE (u vs v): {avg_fm_mse:.4f}, "
             f"|du/dt|: {avg_du_dt:.4f}, "
-            f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec:02d}",
+            f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec_in_min:02d}",
         )
+        metrics_writer.writerow(
+            [epoch + 1, f"{avg_loss:.6f}", f"{avg_fm_mse:.6f}", f"{avg_du_dt:.6f}",
+             total_elapsed_sec],
+        )
+        metrics_file.flush()
 
         # Save DiT checkpoint:
         save_ckpt(model, ema, opt, args, epoch)
