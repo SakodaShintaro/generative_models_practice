@@ -19,7 +19,7 @@ from diffusers.models import AutoencoderKL
 from models import DiT, MiT
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.datasets import STL10
+from torchvision.datasets import MNIST, STL10
 from torchvision.utils import save_image
 from tqdm import tqdm
 
@@ -27,8 +27,6 @@ from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 IMAGE_SIZE = 64
-# MODEL_TYPE = "flow_matching"
-MODEL_TYPE = "mean_flow"
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -46,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
+    parser.add_argument("--model_type", choices=["flow_matching", "mean_flow"], default="mean_flow")
+    parser.add_argument("--dataset", choices=["stl10", "mnist"], default="stl10")
     return parser.parse_args()
 
 
@@ -83,7 +83,7 @@ def sample_images(
     z = torch.randn(n, 4, latent_size, latent_size, device=device)
     y = torch.tensor(class_labels, device=device)
 
-    if MODEL_TYPE == "flow_matching":
+    if args.model_type == "flow_matching":
         sample_n = args.nfe
         dt = 1.0 / sample_n
         for i in range(sample_n):
@@ -92,7 +92,7 @@ def sample_images(
             pred = model.forward(z, t, y)
             z = z.detach().clone() - pred * dt
 
-    elif MODEL_TYPE == "mean_flow":
+    elif args.model_type == "mean_flow":
         t = torch.ones(n, device=device)
         r = torch.zeros_like(t)
         pred = model.forward(z, t, r, y)
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     assert IMAGE_SIZE % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = IMAGE_SIZE // 8
     ckpt = torch.load(args.ckpt) if args.ckpt is not None else None
-    model_class = DiT if MODEL_TYPE == "flow_matching" else MiT
+    model_class = DiT if args.model_type == "flow_matching" else MiT
     model = model_class(
         depth=12,
         hidden_size=384,
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     requires_grad(ema, flag=False)
     model = model.to(device)
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema").to(device)
-    logger.info(f"{MODEL_TYPE} Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    logger.info(f"{args.model_type} Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer
     opt = torch.optim.AdamW(
@@ -198,15 +198,27 @@ if __name__ == "__main__":
         opt.load_state_dict(ckpt["opt"])
 
     # Setup data:
-    transform = transforms.Compose(
-        [
-            transforms.Resize(IMAGE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
-        ],
-    )
-
-    dataset = STL10(args.data_path, split="unlabeled", transform=transform, download=True)
+    if args.dataset == "stl10":
+        transform = transforms.Compose(
+            [
+                transforms.Resize(IMAGE_SIZE),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
+            ],
+        )
+        dataset = STL10(args.data_path, split="unlabeled", transform=transform, download=True)
+    elif args.dataset == "mnist":
+        # MNIST is 28x28 grayscale: upscale and replicate to 3 channels so the VAE
+        # (trained on RGB) can encode it.
+        transform = transforms.Compose(
+            [
+                transforms.Resize(IMAGE_SIZE),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
+            ],
+        )
+        dataset = MNIST(args.data_path, train=True, transform=transform, download=True)
 
     loader = DataLoader(
         dataset,
@@ -266,12 +278,12 @@ if __name__ == "__main__":
             r = r.squeeze()
             v = noise - x
 
-            if MODEL_TYPE == "flow_matching":
+            if args.model_type == "flow_matching":
                 out = model(perturbed_data, t, y)
                 loss = (out - v).pow(2).mean()
                 fm_mse = loss.detach()
                 du_dt_mag = torch.tensor(0.0, device=device)
-            elif MODEL_TYPE == "mean_flow":
+            elif args.model_type == "mean_flow":
 
                 def f(x, t_, r=r, y=y):
                     return model(x, t_, r, y)
