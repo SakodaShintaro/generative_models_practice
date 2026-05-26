@@ -40,8 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--log_every", type=int, default=100)
-    parser.add_argument("--ckpt_every", type=int, default=500)
+    parser.add_argument("--log_every", type=int, default=1)
+    parser.add_argument("--ckpt_every", type=int, default=50)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--cfg_scale", type=float, default=4.0)
     parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
@@ -218,18 +218,14 @@ if __name__ == "__main__":
     ema.eval()  # EMA model should always be in eval mode
 
     # Variables for monitoring/logging purposes:
-    train_steps = 0
-    log_steps = 0
-    running_loss = 0
     start_time = time()
 
     eps = 0.001
 
-    save_ckpt(model, ema, opt, args, train_steps)
-
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
-        logger.info(f"Beginning epoch {epoch}...")
+        log_steps = 0
+        running_loss = 0
         for x, y in loader:
             x = x.to(device)
             y = y.to(device)
@@ -254,30 +250,29 @@ if __name__ == "__main__":
             # Log loss values:
             running_loss += loss.item()
             log_steps += 1
-            train_steps += 1
-            if train_steps % args.log_every == 0:
-                # Measure training speed:
-                torch.cuda.synchronize()
-                end_time = time()
-                steps_per_sec = log_steps / (end_time - start_time)
-                # Reduce loss history over all processes:
-                avg_loss = torch.tensor(running_loss / log_steps, device=device)
-                avg_loss = avg_loss.item()
-                logger.info(
-                    f"(step={train_steps:07d}) "
-                    f"Train Loss: {avg_loss:.4f}, "
-                    f"Train Steps/Sec: {steps_per_sec:.2f}",
-                )
-                # Reset monitoring variables:
-                running_loss = 0
-                log_steps = 0
-                start_time = time()
+        if epoch % args.log_every == 0:
+            # Measure training speed:
+            torch.cuda.synchronize()
+            end_time = time()
+            steps_per_sec = log_steps / (end_time - start_time)
+            # Reduce loss history over all processes:
+            avg_loss = torch.tensor(running_loss / log_steps, device=device)
+            avg_loss = avg_loss.item()
+            logger.info(
+                f"(epoch={epoch:07d}) "
+                f"Train Loss: {avg_loss:.4f}, "
+                f"Train Steps/Sec: {steps_per_sec:.2f}",
+            )
+            # Reset monitoring variables:
+            running_loss = 0
+            log_steps = 0
+            start_time = time()
 
-            # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0:
-                save_ckpt(model, ema, opt, args, train_steps)
-                model.train()
+        # Save DiT checkpoint:
+        if epoch % args.ckpt_every == 0:
+            save_ckpt(model, ema, opt, args, epoch)
+            model.train()
 
     # Save final checkpoint:
-    save_ckpt(model, ema, opt, args, train_steps)
+    save_ckpt(model, ema, opt, args, args.epochs)
     logger.info("Done!")
