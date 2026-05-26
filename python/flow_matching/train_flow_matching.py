@@ -41,7 +41,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--ckpt_every", type=int, default=50)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--cfg_scale", type=float, default=4.0)
     parser.add_argument("--nfe", type=int, default=20, help="Number of Function Evaluations")
@@ -267,6 +266,5 @@ if __name__ == "__main__":
         )
 
         # Save DiT checkpoint:
-        if (epoch + 1) % args.ckpt_every == 0:
-            save_ckpt(model, ema, opt, args, epoch)
-            model.train()
+        save_ckpt(model, ema, opt, args, epoch)
+        model.train()
