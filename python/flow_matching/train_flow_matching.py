@@ -40,7 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--ckpt_every", type=int, default=50)
     parser.add_argument("--ckpt", type=Path, default=None)
     parser.add_argument("--cfg_scale", type=float, default=4.0)
@@ -250,24 +249,21 @@ if __name__ == "__main__":
             # Log loss values:
             running_loss += loss.item()
             log_steps += 1
-        if (epoch + 1) % args.log_every == 0:
-            # Measure training speed:
-            torch.cuda.synchronize()
-            end_time = time()
-            elapsed_sec = int(end_time - start_time)
-            elapsed_min = elapsed_sec // 60
-            elapsed_sec = elapsed_sec % 60
-            # Reduce loss history over all processes:
-            avg_loss = torch.tensor(running_loss / log_steps, device=device)
-            avg_loss = avg_loss.item()
-            logger.info(
-                f"(epoch={epoch + 1:07d}) "
-                f"Train Loss: {avg_loss:.4f}, "
-                f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec:02d}",
-            )
-            # Reset monitoring variables:
-            running_loss = 0
-            log_steps = 0
+
+        # Measure training speed:
+        torch.cuda.synchronize()
+        end_time = time()
+        elapsed_sec = int(end_time - start_time)
+        elapsed_min = elapsed_sec // 60
+        elapsed_sec = elapsed_sec % 60
+        # Reduce loss history over all processes:
+        avg_loss = torch.tensor(running_loss / log_steps, device=device)
+        avg_loss = avg_loss.item()
+        logger.info(
+            f"(epoch={epoch + 1:07d}) "
+            f"Train Loss: {avg_loss:.4f}, "
+            f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec:02d}",
+        )
 
         # Save DiT checkpoint:
         if (epoch + 1) % args.ckpt_every == 0:
