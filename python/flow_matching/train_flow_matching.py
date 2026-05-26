@@ -227,6 +227,8 @@ if __name__ == "__main__":
     for epoch in range(args.epochs):
         log_steps = 0
         running_loss = 0
+        running_fm_mse = 0
+        running_du_dt = 0
         for x, y in tqdm(loader, desc=f"Epoch {epoch + 1}/{args.epochs}"):
             x = x.to(device)
             y = y.to(device)
@@ -250,10 +252,12 @@ if __name__ == "__main__":
 
             if MODEL_TYPE == "flow_matching":
                 out = model(perturbed_data, t, y)
-                loss = torch.mean(torch.square(out - v))
+                loss = (out - v).pow(2).mean()
+                fm_mse = loss.detach()
+                du_dt_mag = torch.tensor(0.0, device=device)
             elif MODEL_TYPE == "mean_flow":
 
-                def f(x, t_):
+                def f(x, t_, r=r, y=y):
                     return model(x, t_, r, y)
 
                 with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
@@ -266,6 +270,12 @@ if __name__ == "__main__":
                 delta_sq = (u - u_target.detach()).pow(2)
                 w = 1.0 / (delta_sq.detach().mean(dim=(1, 2, 3), keepdim=True) + 1e-3)
                 loss = (w * delta_sq).mean()
+                # Tracking-only: restrict to the r=t subset, where u_target = v exactly
+                # (pure flow-matching regime). For r<t the optimum u_MF ≠ v, so the
+                # full-batch (u-v)² has no reason to decrease.
+                per_sample_uv_sq = (u - v).detach().pow(2).mean(dim=(1, 2, 3))
+                fm_mse = per_sample_uv_sq[fm_mask].mean()
+                du_dt_mag = du_dt.detach().abs().mean()
 
             opt.zero_grad()
             loss.backward()
@@ -274,6 +284,8 @@ if __name__ == "__main__":
 
             # Log loss values:
             running_loss += loss.item()
+            running_fm_mse += fm_mse.item()
+            running_du_dt += du_dt_mag.item()
             log_steps += 1
 
         # Measure training speed:
@@ -283,11 +295,14 @@ if __name__ == "__main__":
         elapsed_min = elapsed_sec // 60
         elapsed_sec = elapsed_sec % 60
         # Reduce loss history over all processes:
-        avg_loss = torch.tensor(running_loss / log_steps, device=device)
-        avg_loss = avg_loss.item()
+        avg_loss = running_loss / log_steps
+        avg_fm_mse = running_fm_mse / log_steps
+        avg_du_dt = running_du_dt / log_steps
         logger.info(
             f"(epoch={epoch + 1:07d}) "
             f"Train Loss: {avg_loss:.4f}, "
+            f"FM MSE (u vs v): {avg_fm_mse:.4f}, "
+            f"|du/dt|: {avg_du_dt:.4f}, "
             f"Elapsed Time: {elapsed_min:03d}:{elapsed_sec:02d}",
         )
 
