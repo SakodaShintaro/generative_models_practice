@@ -154,9 +154,6 @@ class TTTMLP(nn.Module):
       - update  (Eq. 1):  W_t = W_{t-1} - eta * grad_W || f_W(K_t) - V_t ||^2
       - apply   (Eq. 2):  O_t = f_{W_t}(Q_t)           ("update then apply")
       - learnable learning rate ``eta`` (per head), meta-learned init ``W_0``
-      - tanh gating (Eq. 3):  out = tanh(alpha) * O_TTT, alpha init ~= 0.001,
-        so the TTT contribution starts near zero and is *added* to the attention
-        output by the surrounding block's residual connection.
 
     The inner gradient is written in closed form so the whole recurrence stays a
     single differentiable graph, letting the outer optimizer backprop through the
@@ -179,8 +176,6 @@ class TTTMLP(nn.Module):
         # learnable inner learning rate eta (per head), softplus-positive; init ~0.1
         # so the compounding inner updates stay stable early in training.
         self.log_lr = nn.Parameter(torch.full((num_heads,), -2.2))
-        # tanh gate alpha (Eq. 3), initialized near zero
-        self.gate_alpha = nn.Parameter(torch.full((dim,), 0.001))
 
     @staticmethod
     def _gelu_grad(x: torch.Tensor) -> torch.Tensor:
@@ -227,8 +222,7 @@ class TTTMLP(nn.Module):
         out = torch.stack(outs, dim=2).reshape(b, t, d)
         out = self.norm(out.reshape(b * t, d)).reshape(b, t, d)
         out = self.proj(out)
-        # tanh gating (Eq. 3): keep the TTT contribution small at init
-        return torch.tanh(self.gate_alpha) * out
+        return out
 
 
 TEMPORAL_MIXERS = {
