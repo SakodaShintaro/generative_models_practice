@@ -19,7 +19,12 @@ LATENT_CHANNELS = 4
 VAE_DOWNSCALE = 8
 
 
-def add_model_args(parser: argparse.ArgumentParser) -> None:
+# All switchable temporal sequence models, in the round-robin order train.py runs.
+METHODS = ["ttt", "gated_deltanet", "attention", "gru"]
+
+
+def add_shared_model_args(parser: argparse.ArgumentParser) -> None:
+    """Architecture args shared by every temporal model (no --temporal here)."""
     parser.add_argument("--image_size", type=int, default=128)
     parser.add_argument("--context_frames", type=int, default=8)
     parser.add_argument("--horizon", type=int, default=4)
@@ -30,12 +35,15 @@ def add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--predictor_depth", type=int, default=6)
     parser.add_argument("--num_heads", type=int, default=6)
     parser.add_argument("--mlp_ratio", type=float, default=4.0)
-    parser.add_argument(
-        "--temporal", choices=["attention", "gru", "gated_deltanet", "ttt"], required=True
-    )
 
 
-def build_model(args: argparse.Namespace) -> WorldModel:
+def add_model_args(parser: argparse.ArgumentParser) -> None:
+    """Shared architecture args plus a required --temporal (for single-model tools)."""
+    add_shared_model_args(parser)
+    parser.add_argument("--temporal", choices=METHODS, required=True)
+
+
+def build_model(args: argparse.Namespace, temporal: str) -> WorldModel:
     latent_size = args.image_size // VAE_DOWNSCALE
     return WorldModel(
         latent_channels=LATENT_CHANNELS,
@@ -50,7 +58,7 @@ def build_model(args: argparse.Namespace) -> WorldModel:
         horizon=args.horizon,
         action_dim=ACTION_DIM,
         freq_embedding_size=256,
-        temporal=args.temporal,
+        temporal=temporal,
     )
 
 

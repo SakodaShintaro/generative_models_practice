@@ -6,7 +6,7 @@
 
 ## パイプライン
 
-```
+```text
 context frames (T,3,H,W)
   └─ 凍結 TAESD VAE encode ─▶ latents (T,4,H/8,W/8)
        └─ STEncoder (Spatial=Attention, Temporal=系列モデル) ─▶ state (S,D)  ← 最終タイムステップ
@@ -43,28 +43,33 @@ Bench2Drive (`/media/sakoda/samsung_4t/bench2drive`) の `camera/rgb_front` と 
 
 ## 使い方
 
-```bash
-# 学習（temporal を切り替え）
-./train.sh ttt
-./train.sh gated_deltanet
-./train.sh gru
-./train.sh attention
+`train.py` は **4手法を1エポックずつラウンドロビン**で学習する（同時に4モデルを保持）:
 
-# もしくは直接
-uv run python train.py --temporal ttt --results_dir results/ttt
+```text
+ttt e1 → gated_deltanet e1 → attention e1 → gru e1 → ttt e2 → ...
+```
+
+各エポックの終わりに、その手法の固定名チェックポイント（`latest.pt`、毎回上書き）と
+可視化 PNG を出力する。
+
+```bash
+# 学習（4手法をまとめて進める）
+uv run python train.py --results_dir results
 
 # サンプリング（clip=1ショット / rollout=自己回帰でN步超え、記憶ストレステスト）
 uv run python sample.py --ckpt results/ttt/checkpoints/latest.pt --mode clip   --temporal ttt --use_ema
 uv run python sample.py --ckpt results/ttt/checkpoints/latest.pt --mode rollout --temporal ttt --use_ema
 ```
 
-`sample.py` はアーキテクチャ引数（`--hidden_size` 等）を学習時と一致させること。
+`sample.py` はアーキテクチャ引数（`--hidden_size` 等）と `--temporal` を学習時と一致させること。
 
 ## 出力
 
-- `results/<run>/samples/*.png` — 各サンプル2行（上=正解 context+future、下=予測 context+future）。
-- `results/<run>/metrics.csv` — epoch ごとの loss。
-- `results/<run>/checkpoints/latest.pt` — `model` / `ema` / `args`。
+手法ごとに `results/<temporal>/` 以下へ:
+
+- `samples/epoch_XXXX.png` — 各サンプル2行（上=正解 context+future、下=予測 context+future）。
+- `metrics.csv` — epoch ごとの loss。
+- `checkpoints/latest.pt` — 毎エポック上書き（`model` / `ema` / `args` / `temporal` / `epoch`）。
 
 ## ファイル
 

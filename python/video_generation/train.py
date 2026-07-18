@@ -1,10 +1,18 @@
-"""Train the spatio-temporal world model on Bench2Drive with flow matching.
+"""Round-robin training of all temporal models on Bench2Drive with flow matching.
 
-The frozen TAESD VAE encodes context/future frames to latents. The spatio-temporal
-encoder compresses the context into a fixed-size state (its temporal mixer is one of
-attention / GRU / GatedDeltaNet / TTT). A flow-matching DiT then predicts the N future
-latent frames from the state and the future action sequence, trained with RoboTTT-style
-sequence forcing (independent per-frame noise levels).
+The four temporal sequence models (ttt / gated_deltanet / attention / gru) are trained
+side by side, one epoch each per round:
+
+    ttt e1, gated_deltanet e1, attention e1, gru e1, ttt e2, gated_deltanet e2, ...
+
+so their learning curves stay comparable at every point. Every epoch overwrites a
+fixed-name checkpoint (``checkpoints/latest.pt``) and writes a fresh visualization for
+that method.
+
+The frozen TAESD VAE encodes context/future frames to latents. Each method's
+spatio-temporal encoder compresses the context into a fixed-size state; a flow-matching
+DiT then predicts the N future latent frames from the state and the future action
+sequence, trained with RoboTTT-style sequence forcing (independent per-frame noise).
 """
 
 from __future__ import annotations
@@ -16,7 +24,15 @@ from pathlib import Path
 from time import time
 
 import torch
-from common import add_model_args, build_model, decode_latents, encode_frames, generate, load_vae
+from common import (
+    METHODS,
+    add_shared_model_args,
+    build_model,
+    decode_latents,
+    encode_frames,
+    generate,
+    load_vae,
+)
 from dataset import Bench2DriveDataset
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
@@ -38,9 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_routes", type=int, default=200)
     parser.add_argument("--ema_decay", type=float, default=0.999)
     parser.add_argument("--sample_nfe", type=int, default=25)
-    parser.add_argument("--sample_every", type=int, default=5)
-    parser.add_argument("--ckpt", type=Path, default=None)
-    add_model_args(parser)
+    add_shared_model_args(parser)
     return parser.parse_args()
 
 
@@ -88,6 +102,27 @@ def train_step(
     return loss.item()
 
 
+def run_epoch(
+    method: str,
+    state: dict,
+    vae: torch.nn.Module,
+    loader: DataLoader,
+    beta: torch.distributions.Beta,
+    args: argparse.Namespace,
+    device: torch.device,
+    epoch: int,
+) -> float:
+    """Train one method for a single epoch; returns the average loss."""
+    model, ema, opt = state["model"], state["ema"], state["opt"]
+    model.train()
+    running_loss = 0.0
+    steps = 0
+    for batch in tqdm(loader, desc=f"epoch {epoch}: {method}"):
+        running_loss += train_step(model, ema, opt, vae, batch, beta, args, device)
+        steps += 1
+    return running_loss / steps
+
+
 @torch.no_grad()
 def save_samples(
     ema: torch.nn.Module, vae: torch.nn.Module, batch: dict, args: argparse.Namespace, path: Path
@@ -99,8 +134,7 @@ def save_samples(
     future = batch["future"].to(device)
     actions = batch["actions"].to(device)
     ctx_latents = encode_frames(vae, context)
-    pred_latents = generate(ema, ctx_latents, actions, args.sample_nfe)
-    pred = decode_latents(vae, pred_latents)
+    pred = decode_latents(vae, generate(ema, ctx_latents, actions, args.sample_nfe))
 
     rows = []
     for i in range(context.shape[0]):
@@ -110,29 +144,42 @@ def save_samples(
     save_image(grid, path, nrow=args.context_frames + args.horizon)
 
 
+def make_method_state(method: str, args: argparse.Namespace, device: torch.device) -> dict:
+    """Build the model / EMA / optimiser / output dirs / metrics writer for one method."""
+    model = build_model(args, method).to(device)
+    ema = deepcopy(model).eval()
+    for p in ema.parameters():
+        p.requires_grad = False
+    opt = torch.optim.AdamW(
+        model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=0
+    )
+    run_dir = args.results_dir / method
+    (run_dir / "samples").mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    metrics_file = (run_dir / "metrics.csv").open("w", newline="")
+    writer = csv.writer(metrics_file)
+    writer.writerow(["epoch", "train_loss", "elapsed_sec"])
+    metrics_file.flush()
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"[{method}] parameters: {n_params:,}")
+    return {
+        "model": model,
+        "ema": ema,
+        "opt": opt,
+        "run_dir": run_dir,
+        "metrics_file": metrics_file,
+        "writer": writer,
+    }
+
+
 def main() -> None:
     assert torch.cuda.is_available(), "Training requires a GPU."
     args = parse_args()
     device = torch.device("cuda")
     torch.manual_seed(0)
-
     args.results_dir.mkdir(parents=True, exist_ok=True)
-    (args.results_dir / "samples").mkdir(exist_ok=True)
-    (args.results_dir / "checkpoints").mkdir(exist_ok=True)
 
     vae = load_vae(device)
-    model = build_model(args).to(device)
-    if args.ckpt is not None:
-        ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-    ema = deepcopy(model).eval()
-    for p in ema.parameters():
-        p.requires_grad = False
-    print(f"[{args.temporal}] parameters: {sum(p.numel() for p in model.parameters()):,}")
-
-    opt = torch.optim.AdamW(
-        model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=0
-    )
 
     dataset = Bench2DriveDataset(
         data_root=args.data_root,
@@ -156,41 +203,36 @@ def main() -> None:
     fixed_batch = next(iter(loader))
     fixed_batch = {k: v[: min(4, args.batch_size)] for k, v in fixed_batch.items()}
 
-    metrics_file = (args.results_dir / "metrics.csv").open("w", newline="")
-    metrics_writer = csv.writer(metrics_file)
-    metrics_writer.writerow(["epoch", "train_loss", "elapsed_sec"])
-    metrics_file.flush()
+    states = {method: make_method_state(method, args, device) for method in METHODS}
 
     # Beta(1.5, 1) noise-level sampler for sequence forcing (RoboTTT Eq. 5).
     beta = torch.distributions.Beta(1.5, 1.0)
     start_time = time()
-    save_samples(ema, vae, fixed_batch, args, args.results_dir / "samples" / "init.png")
 
-    for epoch in range(args.epochs):
-        model.train()
-        running_loss = 0.0
-        steps = 0
-        for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}"):
-            running_loss += train_step(model, ema, opt, vae, batch, beta, args, device)
-            steps += 1
+    # Round-robin: one epoch per method per round.
+    for epoch in range(1, args.epochs + 1):
+        for method in METHODS:
+            state = states[method]
+            avg_loss = run_epoch(method, state, vae, loader, beta, args, device, epoch)
+            elapsed = int(time() - start_time)
+            mm, ss = elapsed // 60, elapsed % 60
+            print(f"(epoch {epoch}) [{method}] loss {avg_loss:.4f}  elapsed {mm}m{ss:02d}s")
+            state["writer"].writerow([epoch, f"{avg_loss:.6f}", elapsed])
+            state["metrics_file"].flush()
 
-        avg_loss = running_loss / steps
-        elapsed = int(time() - start_time)
-        mm, ss = elapsed // 60, elapsed % 60
-        print(f"(epoch {epoch + 1}) loss {avg_loss:.4f}  elapsed {mm:d}m{ss:02d}s")
-        metrics_writer.writerow([epoch + 1, f"{avg_loss:.6f}", elapsed])
-        metrics_file.flush()
-
-        if (epoch + 1) % args.sample_every == 0 or epoch + 1 == args.epochs:
+            # every epoch: overwrite the fixed-name checkpoint + write a visualization
             save_samples(
-                ema, vae, fixed_batch, args, args.results_dir / "samples" / f"{epoch + 1:04d}.png"
+                state["ema"], vae, fixed_batch, args,
+                state["run_dir"] / "samples" / f"epoch_{epoch:04d}.png",
             )
             torch.save(
-                {"model": model.state_dict(), "ema": ema.state_dict(), "args": args},
-                args.results_dir / "checkpoints" / "latest.pt",
+                {"model": state["model"].state_dict(), "ema": state["ema"].state_dict(),
+                 "args": args, "temporal": method, "epoch": epoch},
+                state["run_dir"] / "checkpoints" / "latest.pt",
             )
 
-    metrics_file.close()
+    for state in states.values():
+        state["metrics_file"].close()
 
 
 if __name__ == "__main__":

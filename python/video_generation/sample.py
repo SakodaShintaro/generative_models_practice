@@ -63,7 +63,7 @@ def main() -> None:
 
     vae = load_vae(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model = build_model(args).to(device).eval()
+    model = build_model(args, args.temporal).to(device).eval()
     model.load_state_dict(ckpt["ema" if args.use_ema else "model"])
 
     total_future = args.horizon * (args.rollout_steps if args.mode == "rollout" else 1)
