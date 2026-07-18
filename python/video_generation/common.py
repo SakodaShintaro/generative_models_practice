@@ -54,7 +54,6 @@ def build_model(args: argparse.Namespace, temporal: str) -> WorldModel:
         predictor_depth=args.predictor_depth,
         num_heads=args.num_heads,
         mlp_ratio=args.mlp_ratio,
-        context_frames=args.context_frames,
         horizon=args.horizon,
         action_dim=ACTION_DIM,
         freq_embedding_size=256,

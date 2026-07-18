@@ -26,21 +26,46 @@ from torch import nn
 
 
 class CausalSelfAttention(nn.Module):
-    """Causal multi-head self-attention over the time axis."""
+    """Causal multi-head self-attention over the time axis, with rotary PE (RoPE).
+
+    Attention is permutation-equivariant, so it needs its own positional signal.
+    RoPE is applied to q/k *inside* this module (over the time positions), which
+    keeps the positional encoding local to the attention mixer: the recurrent
+    mixers (GRU / GatedDeltaNet / TTT) receive no explicit temporal PE, since they
+    already encode order through their recurrence. RoPE is relative and causal-safe.
+    """
 
     def __init__(self, dim: int, num_heads: int):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+        assert self.head_dim % 2 == 0, "RoPE requires an even head dimension"
         self.qkv = nn.Linear(dim, 3 * dim, bias=True)
         self.proj = nn.Linear(dim, dim, bias=True)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+    @staticmethod
+    def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat([-x2, x1], dim=-1)
+
+    def _apply_rope(self, x: torch.Tensor, t: int) -> torch.Tensor:
+        # x: (B, H, T, hd); rotate by the time position of each token
+        pos = torch.arange(t, device=x.device, dtype=self.inv_freq.dtype)
+        freqs = torch.outer(pos, self.inv_freq)  # (T, hd/2)
+        emb = torch.cat([freqs, freqs], dim=-1)  # (T, hd)
+        cos, sin = emb.cos()[None, None], emb.sin()[None, None]  # (1, 1, T, hd)
+        return (x * cos + self._rotate_half(x) * sin).to(x.dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, t, d = x.shape
         qkv = self.qkv(x).reshape(b, t, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, H, T, hd)
         q, k, v = qkv[0], qkv[1], qkv[2]
+        q = self._apply_rope(q, t)
+        k = self._apply_rope(k, t)
         out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         out = out.transpose(1, 2).reshape(b, t, d)
         return self.proj(out)

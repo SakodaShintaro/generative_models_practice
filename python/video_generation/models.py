@@ -154,7 +154,6 @@ class STEncoder(nn.Module):
         depth: int,
         num_heads: int,
         mlp_ratio: float,
-        max_frames: int,
         temporal: str,
     ):
         super().__init__()
@@ -165,8 +164,8 @@ class STEncoder(nn.Module):
             latent_channels, hidden_size, kernel_size=patch_size, stride=patch_size
         )
         self.spatial_pos = sincos_pos_param(hidden_size, self.grid)
-        self.temporal_pos = nn.Parameter(torch.zeros(1, max_frames, 1, hidden_size))
-        nn.init.normal_(self.temporal_pos, std=0.02)
+        # No temporal positional embedding here: the causal-attention mixer applies its
+        # own RoPE internally, and the recurrent mixers encode order via their recurrence.
         self.blocks = nn.ModuleList(
             [STEncoderBlock(hidden_size, num_heads, mlp_ratio, temporal) for _ in range(depth)]
         )
@@ -178,7 +177,6 @@ class STEncoder(nn.Module):
         x = self.patch_embed(x).flatten(2).transpose(1, 2)  # (B*T, S, D)
         x = x + self.spatial_pos
         x = x.reshape(b, t, self.num_tokens, -1)
-        x = x + self.temporal_pos[:, :t]
         for block in self.blocks:
             x = block(x)
         state = self.norm(x[:, -1])  # (B, S, D): last timestep is the compressed state
@@ -352,7 +350,6 @@ class WorldModel(nn.Module):
         predictor_depth: int,
         num_heads: int,
         mlp_ratio: float,
-        context_frames: int,
         horizon: int,
         action_dim: int,
         freq_embedding_size: int,
@@ -367,7 +364,6 @@ class WorldModel(nn.Module):
             depth=encoder_depth,
             num_heads=num_heads,
             mlp_ratio=mlp_ratio,
-            max_frames=context_frames,
             temporal=temporal,
         )
         self.predictor = FlowPredictor(
