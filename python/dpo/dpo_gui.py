@@ -24,6 +24,7 @@ With LoRA the reference model is free: it is the same transformer with the adapt
 import argparse
 import tkinter as tk
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
@@ -32,8 +33,9 @@ from diffusers import Flux2KleinPipeline
 from diffusers.pipelines.flux2.pipeline_flux2_klein import compute_empirical_mu
 from diffusers.training_utils import cast_training_params
 from peft import LoraConfig
-from peft.utils import get_peft_model_state_dict
+from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
 from PIL import Image, ImageTk
+from safetensors.torch import load_file
 from torchvision import transforms
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -54,11 +56,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=1024)
     parser.add_argument("--display_size", type=int, default=512)
     parser.add_argument("--num_inference_steps", type=int, default=8)
+    parser.add_argument("--guidance_scale", type=float, default=1.0)
     parser.add_argument("--steps_per_pair", type=int, default=8)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta_dpo", type=float, default=2500.0)
     parser.add_argument("--lora_rank", type=int, default=8)
     parser.add_argument("--base_seed", type=int, default=0)
+    # A .safetensors file written by a previous session, to keep training its adapter.
+    parser.add_argument("--resume_lora", type=Path, default=None)
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
     return parser.parse_args()
@@ -88,6 +93,9 @@ class InteractiveDpo:
             self.prompt_embeds, self.text_ids = self.pipeline.encode_prompt(
                 prompt=args.prompt, device=DEVICE,
             )
+            # Classifier-free guidance needs the empty prompt as well. Caching it here means
+            # the text encoder can still be dropped afterwards.
+            self.negative_prompt_embeds, _ = self.pipeline.encode_prompt(prompt="", device=DEVICE)
         self.pipeline.text_encoder = None
         torch.cuda.empty_cache()
 
@@ -101,6 +109,8 @@ class InteractiveDpo:
                 target_modules=LORA_TARGETS,
             ),
         )
+        if args.resume_lora is not None:
+            self.load_lora(args.resume_lora)
         cast_training_params(self.transformer, dtype=torch.float32)
         self.transformer.enable_gradient_checkpointing()
         self.lora_params = [p for p in self.transformer.parameters() if p.requires_grad]
@@ -125,8 +135,9 @@ class InteractiveDpo:
                     prompt_embeds=self.prompt_embeds,
                     height=self.args.resolution,
                     width=self.args.resolution,
+                    negative_prompt_embeds=self.negative_prompt_embeds,
                     num_inference_steps=self.args.num_inference_steps,
-                    guidance_scale=1.0,
+                    guidance_scale=self.args.guidance_scale,
                     generator=generator,
                 ).images[0],
             )
@@ -200,15 +211,27 @@ class InteractiveDpo:
             accuracies.append(accuracy)
         return sum(losses) / len(losses), sum(accuracies) / len(accuracies)
 
+    def load_lora(self, path: Path) -> None:
+        """Restore the adapter of a previous session into the freshly added one."""
+        assert path.is_file(), f"{path} not found"
+        # save_lora_weights prefixes every key with the name of the model it belongs to.
+        state_dict = {
+            key.removeprefix("transformer."): value for key, value in load_file(str(path)).items()
+        }
+        result = set_peft_model_state_dict(self.transformer, state_dict)
+        assert not result.unexpected_keys, f"unexpected keys in {path}: {result.unexpected_keys}"
+        print(f"resumed LoRA weights from {path}")
+
     def save_lora(self) -> Path:
-        output_dir = self.args.results_dir / f"round_{self.round_index:04d}"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        self.args.results_dir.mkdir(parents=True, exist_ok=True)
+        weight_name = f"{datetime.now(tz=UTC).astimezone().strftime('%Y%m%d_%H%M%S')}.safetensors"
         Flux2KleinPipeline.save_lora_weights(
-            str(output_dir),
+            str(self.args.results_dir),
             transformer_lora_layers=get_peft_model_state_dict(self.transformer),
+            weight_name=weight_name,
             safe_serialization=True,
         )
-        return output_dir
+        return self.args.results_dir / weight_name
 
 
 @contextmanager
