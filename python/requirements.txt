@@ -3,3 +3,7 @@ torch
 timm
 diffusers
 accelerate
+transformers
+datasets
+peft
+safetensors

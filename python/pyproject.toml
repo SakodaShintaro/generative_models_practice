@@ -9,6 +9,10 @@ dependencies = [
     "timm",
     "diffusers",
     "accelerate",
+    "transformers",
+    "datasets",
+    "peft",
+    "safetensors",
     "numpy",
 ]
 
