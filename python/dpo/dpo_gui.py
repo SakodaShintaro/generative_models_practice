@@ -51,18 +51,19 @@ LORA_TARGETS = ["to_q", "to_k", "to_v", "add_q_proj", "add_k_proj", "add_v_proj"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--pretrained_model", type=str, default="black-forest-labs/FLUX.2-klein-4B")
+    parser.add_argument(
+        "--pretrained_model", type=str, default="black-forest-labs/FLUX.2-klein-base-4B"
+    )
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--resolution", type=int, default=1024)
+    parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=512)
-    parser.add_argument("--num_inference_steps", type=int, default=8)
-    parser.add_argument("--guidance_scale", type=float, default=1.0)
+    parser.add_argument("--num_inference_steps", type=int, default=25)
+    parser.add_argument("--guidance_scale", type=float, default=3.0)
     parser.add_argument("--steps_per_pair", type=int, default=8)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta_dpo", type=float, default=2500.0)
     parser.add_argument("--lora_rank", type=int, default=8)
-    parser.add_argument("--base_seed", type=int, default=0)
-    # A .safetensors file written by a previous session, to keep training its adapter.
+    parser.add_argument("--base_seed", type=int, default=-1)
     parser.add_argument("--resume_lora", type=Path, default=None)
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
@@ -123,19 +124,28 @@ class InteractiveDpo:
         )
         self.round_index = 0
 
+    def round_seeds(self) -> tuple[int, int]:
+        """The two seeds of this round, one per candidate."""
+        if self.args.base_seed == -1:
+            random_seeds = torch.randint(0, 2**31 - 1, (2,))
+            return int(random_seeds[0]), int(random_seeds[1])
+        base = self.args.base_seed + 2 * self.round_index
+        return base, base + 1
+
     @torch.no_grad()
     def generate_pair(self) -> tuple[Image.Image, Image.Image]:
         """Two samples of the current model for the same prompt, with different seeds."""
+        seeds = self.round_seeds()
+        print(f"round {self.round_index}: seeds={seeds}")
         images = []
-        for offset in (0, 1):
-            seed = self.args.base_seed + 2 * self.round_index + offset
+        for seed in seeds:
             generator = torch.Generator(device=DEVICE).manual_seed(seed)
             images.append(
                 self.pipeline(
                     prompt_embeds=self.prompt_embeds,
+                    negative_prompt_embeds=self.negative_prompt_embeds,
                     height=self.args.resolution,
                     width=self.args.resolution,
-                    negative_prompt_embeds=self.negative_prompt_embeds,
                     num_inference_steps=self.args.num_inference_steps,
                     guidance_scale=self.args.guidance_scale,
                     generator=generator,
