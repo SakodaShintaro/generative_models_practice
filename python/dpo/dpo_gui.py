@@ -55,8 +55,8 @@ def parse_args() -> argparse.Namespace:
         "--pretrained_model", type=str, default="black-forest-labs/FLUX.2-klein-base-4B"
     )
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--resolution", type=int, default=512)
-    parser.add_argument("--display_size", type=int, default=512)
+    parser.add_argument("--resolution", type=int, default=256)
+    parser.add_argument("--display_size", type=int, default=256)
     parser.add_argument("--num_inference_steps", type=int, default=25)
     parser.add_argument("--guidance_scale", type=float, default=3.0)
     parser.add_argument("--steps_per_pair", type=int, default=8)
@@ -302,7 +302,7 @@ class DpoWindow:
                 width=14,
                 command=lambda: self.on_choice(1),
             ),
-            tk.Button(button_frame, text="保存して終了", width=14, command=self.on_quit),
+            tk.Button(button_frame, text="保存", width=14, command=self.on_save),
         ]
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=4)
@@ -350,11 +350,12 @@ class DpoWindow:
         self.trainer.round_index += 1
         self.next_round("(skipped)")
 
-    def on_quit(self) -> None:
+    def on_save(self) -> None:
+        # Saving does not end the session: keep labeling afterwards, and save again any time.
         self.set_busy("saving LoRA weights...")
-        output_dir = self.trainer.save_lora()
-        print(f"saved LoRA weights to {output_dir}")
-        self.root.destroy()
+        path = self.trainer.save_lora()
+        print(f"saved LoRA weights to {path}")
+        self.set_ready(f"round {self.trainer.round_index}: saved {path.name}")
 
     def run(self) -> None:
         self.root.mainloop()
