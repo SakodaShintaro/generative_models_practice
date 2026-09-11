@@ -1,7 +1,7 @@
 opencv-python
 torch
 timm
-diffusers
+diffusers>=0.40.0
 accelerate
 transformers
 datasets
