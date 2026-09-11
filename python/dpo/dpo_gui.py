@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--display_size", type=int, default=256)
     parser.add_argument("--num_inference_steps", type=int, default=25)
     parser.add_argument("--guidance_scale", type=float, default=3.0)
-    parser.add_argument("--steps_per_pair", type=int, default=8)
+    parser.add_argument("--steps_per_pair", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta_dpo", type=float, default=2500.0)
     parser.add_argument("--lora_rank", type=int, default=8)
@@ -67,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume_lora", type=Path, default=None)
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
+    parser.add_argument("--max_sequence_length", type=int, default=256)
+    parser.add_argument("--gradient_checkpointing", action="store_true")
     return parser.parse_args()
 
 
@@ -90,13 +92,20 @@ class InteractiveDpo:
 
         # The prompt never changes, so encode it once and drop the Qwen3 text encoder. This
         # frees several GB and is what makes the LoRA training fit next to the transformer.
+        num_prompt_tokens = count_prompt_tokens(self.pipeline.tokenizer, args.prompt)
+        assert num_prompt_tokens <= args.max_sequence_length, (
+            f"the prompt has {num_prompt_tokens} tokens and would be truncated; "
+            f"raise --max_sequence_length above {args.max_sequence_length}"
+        )
         with torch.no_grad():
             self.prompt_embeds, self.text_ids = self.pipeline.encode_prompt(
-                prompt=args.prompt, device=DEVICE,
+                prompt=args.prompt, device=DEVICE, max_sequence_length=args.max_sequence_length,
             )
             # Classifier-free guidance needs the empty prompt as well. Caching it here means
             # the text encoder can still be dropped afterwards.
-            self.negative_prompt_embeds, _ = self.pipeline.encode_prompt(prompt="", device=DEVICE)
+            self.negative_prompt_embeds, _ = self.pipeline.encode_prompt(
+                prompt="", device=DEVICE, max_sequence_length=args.max_sequence_length,
+            )
         self.pipeline.text_encoder = None
         torch.cuda.empty_cache()
 
@@ -113,7 +122,8 @@ class InteractiveDpo:
         if args.resume_lora is not None:
             self.load_lora(args.resume_lora)
         cast_training_params(self.transformer, dtype=torch.float32)
-        self.transformer.enable_gradient_checkpointing()
+        if args.gradient_checkpointing:
+            self.transformer.enable_gradient_checkpointing()
         self.lora_params = [p for p in self.transformer.parameters() if p.requires_grad]
         self.optimizer = torch.optim.AdamW(
             self.lora_params, lr=args.learning_rate, weight_decay=1e-2,
@@ -242,6 +252,17 @@ class InteractiveDpo:
             safe_serialization=True,
         )
         return self.args.results_dir / weight_name
+
+
+def count_prompt_tokens(tokenizer, prompt: str) -> int:
+    """Token count of the prompt as the pipeline feeds it to Qwen3 (chat template included)."""
+    text = tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    return len(tokenizer(text).input_ids)
 
 
 @contextmanager
