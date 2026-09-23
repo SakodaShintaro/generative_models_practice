@@ -9,7 +9,7 @@ dependencies = [
     "timm",
     "diffusers>=0.40.0",
     "accelerate",
-    "transformers",
+    "transformers>=5.17",
     "datasets",
     "peft",
     "safetensors",
@@ -18,6 +18,9 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers" }
 
 [dependency-groups]
 dev = [
