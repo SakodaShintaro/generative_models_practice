@@ -63,7 +63,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume_lora", type=Path, default=None)
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
-    parser.add_argument("--gradient_checkpointing", action="store_true")
     return parser.parse_args()
 
 
@@ -114,8 +113,7 @@ class InteractiveDpo:
         if args.resume_lora is not None:
             self.load_lora(args.resume_lora)
         cast_training_params(self.transformer, dtype=torch.float32)
-        if args.gradient_checkpointing:
-            self.transformer.enable_gradient_checkpointing()
+        self.transformer.enable_gradient_checkpointing()
         self.lora_params = [p for p in self.transformer.parameters() if p.requires_grad]
         self.optimizer = torch.optim.AdamW(
             self.lora_params, lr=args.learning_rate, weight_decay=1e-2,
@@ -258,7 +256,7 @@ class InteractiveDpo:
         return self.session_dir / weight_name
 
     def save_image(self, image: Image.Image, side: str) -> Path:
-        """Save one candidate of the current round at its generated resolution."""
+        """Save the preferred candidate of the current round at its generated resolution."""
         path = self.session_dir / f"round{self.round_index:04d}_{side}_{timestamp()}.png"
         image.save(path)
         return path
@@ -315,16 +313,6 @@ class DpoWindow:
         self.canvases = [tk.Label(image_frame) for _ in range(2)]
         for index, canvas in enumerate(self.canvases):
             canvas.grid(row=0, column=index, padx=6)
-        self.image_save_buttons = [
-            tk.Button(
-                image_frame, text="左の画像を保存", width=14, command=lambda: self.on_save_image(0),
-            ),
-            tk.Button(
-                image_frame, text="右の画像を保存", width=14, command=lambda: self.on_save_image(1),
-            ),
-        ]
-        for index, button in enumerate(self.image_save_buttons):
-            button.grid(row=1, column=index, pady=(4, 0))
 
         button_frame = tk.Frame(self.root)
         button_frame.pack(pady=8)
@@ -346,7 +334,6 @@ class DpoWindow:
         ]
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=4)
-        self.buttons += self.image_save_buttons
 
         self.status = tk.Label(self.root, text="", font=("", 10))
         self.status.pack(pady=(0, 10))
@@ -382,6 +369,8 @@ class DpoWindow:
         self.set_busy("learning from your preference...")
         winner = self.images[winner_index]
         loser = self.images[1 - winner_index]
+        path = self.trainer.save_image(winner, ("left", "right")[winner_index])
+        print(f"saved the preferred image to {path}")
         loss, accuracy = self.trainer.learn_from(winner, loser)
         print(f"round {self.trainer.round_index}: loss={loss:.4f} acc={accuracy:.2f}")
         self.trainer.round_index += 1
@@ -397,11 +386,6 @@ class DpoWindow:
         path = self.trainer.save_lora()
         print(f"saved LoRA weights to {path}")
         self.set_ready(f"round {self.trainer.round_index}: saved {path.name}")
-
-    def on_save_image(self, index: int) -> None:
-        path = self.trainer.save_image(self.images[index], ("left", "right")[index])
-        print(f"saved image to {path}")
-        self.status.config(text=f"round {self.trainer.round_index}: saved {path.name}")
 
     def run(self) -> None:
         self.root.mainloop()
