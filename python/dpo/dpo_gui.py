@@ -1,4 +1,4 @@
-"""Interactive Diffusion-DPO with LoRA on FLUX.2-klein or Qwen-Image-2.1.
+"""Interactive Diffusion-DPO with LoRA on Qwen-Image-2.1.
 
 You are the preference dataset: each round the current model samples two images for one
 prompt with two different seeds. A window shows them side by side; the button you press
@@ -13,11 +13,8 @@ both and compare the errors of the model being trained against a frozen referenc
     d_ref  = ||v_ref_w - v||^2 - ||v_ref_l - v||^2
     loss   = -log sigmoid(-beta * (d - d_ref))
 
-FLUX.2 and Qwen-Image-2.1 are both rectified flow models, so the noising is
-`x_t = (1 - sigma) * x_0 + sigma * eps` and the target is the velocity `v = eps - x_0` (the SDXL
-version of this script used the DDPM formulation with an epsilon target instead). What differs
-between them (text encoder, latent layout, transformer inputs) lives in one backend class per
-model, picked from the `_class_name` in the checkpoint's model_index.json.
+Qwen-Image-2.1 is a rectified flow model, so the noising is `x_t = (1 - sigma) * x_0 + sigma * eps`
+and the target is the velocity `v = eps - x_0`. It is sampled without classifier-free guidance.
 
 With LoRA the reference model is free: it is the same transformer with the adapters disabled
 (`transformer.disable_adapters()`), so only one set of weights is held in memory.
@@ -32,8 +29,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from diffusers import DiffusionPipeline, Flux2KleinPipeline, QwenImage21Pipeline
-from diffusers.pipelines.flux2.pipeline_flux2_klein import compute_empirical_mu
+from diffusers import QwenImage21Pipeline
 from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import calculate_shift
 from diffusers.training_utils import cast_training_params
 from peft import LoraConfig
@@ -47,21 +43,17 @@ torch.backends.cudnn.allow_tf32 = True
 
 DEVICE = torch.device("cuda")
 DTYPE = torch.bfloat16
+PRETRAINED_MODEL = "Qwen/Qwen-Image-2.1"
 TO_TENSOR = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument(
-        "--pretrained_model", type=str, default="black-forest-labs/FLUX.2-klein-base-4B"
-    )
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--resolution", type=int, default=256)
+    parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=256)
     parser.add_argument("--num_inference_steps", type=int, default=25)
-    # FLUX.2-klein: CFG scale. Qwen-Image-2.1: true_cfg_scale, meant to be 1.0 (guidance off).
-    parser.add_argument("--guidance_scale", type=float, default=3.0)
     parser.add_argument("--steps_per_pair", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta_dpo", type=float, default=2500.0)
@@ -70,8 +62,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume_lora", type=Path, default=None)
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
-    # FLUX.2-klein only: Qwen-Image-2.1 never truncates the prompt.
-    parser.add_argument("--max_sequence_length", type=int, default=256)
     parser.add_argument("--gradient_checkpointing", action="store_true")
     return parser.parse_args()
 
@@ -81,185 +71,26 @@ def parse_args() -> argparse.Namespace:
 #################################################################################
 
 
-class Flux2KleinBackend:
-    """FLUX.2-klein: Qwen3 text encoder, 2x2-patchified latents, image-token-only output."""
-
-    # Attention projections of the double blocks (to_q/k/v, add_*_proj) and of the single blocks
-    # (the fused to_qkv_mlp_proj). The output projections are left alone to keep the adapter small.
-    lora_targets = (
-        "to_q", "to_k", "to_v", "add_q_proj", "add_k_proj", "add_v_proj", "to_qkv_mlp_proj",
-    )
-
-    def __init__(self, args: argparse.Namespace) -> None:
-        self.args = args
-        self.pipeline = Flux2KleinPipeline.from_pretrained(
-            args.pretrained_model, dtype=DTYPE,
-        ).to(DEVICE)
-
-        # The prompt never changes, so encode it once and drop the Qwen3 text encoder. This
-        # frees several GB and is what makes the LoRA training fit next to the transformer.
-        num_prompt_tokens = count_prompt_tokens(self.pipeline.tokenizer, args.prompt)
-        assert num_prompt_tokens <= args.max_sequence_length, (
-            f"the prompt has {num_prompt_tokens} tokens and would be truncated; "
-            f"raise --max_sequence_length above {args.max_sequence_length}"
-        )
-        with torch.no_grad():
-            self.prompt_embeds, self.text_ids = self.pipeline.encode_prompt(
-                prompt=args.prompt, device=DEVICE, max_sequence_length=args.max_sequence_length,
-            )
-            # Classifier-free guidance needs the empty prompt as well. Caching it here means
-            # the text encoder can still be dropped afterwards.
-            self.negative_prompt_embeds, _ = self.pipeline.encode_prompt(
-                prompt="", device=DEVICE, max_sequence_length=args.max_sequence_length,
-            )
-        self.pipeline.text_encoder = None
-        torch.cuda.empty_cache()
-
-    def sample(self, generator: torch.Generator) -> Image.Image:
-        return self.pipeline(
-            prompt_embeds=self.prompt_embeds,
-            negative_prompt_embeds=self.negative_prompt_embeds,
-            height=self.args.resolution,
-            width=self.args.resolution,
-            num_inference_steps=self.args.num_inference_steps,
-            guidance_scale=self.args.guidance_scale,
-            generator=generator,
-        ).images[0]
-
-    @torch.no_grad()
-    def encode_pair(self, winner: Image.Image, loser: Image.Image) -> tuple[torch.Tensor, dict]:
-        """Packed latents of [winner ; loser] and the conditioning shared by both."""
-        pixel_values = to_pixel_values([winner, loser], "RGB")
-        # The pipeline helpers do the VAE encoding, the 2x2 patchification and the batch-norm
-        # style latent normalization that FLUX.2 expects, so the latents match training input.
-        patched = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
-        latent_ids = self.pipeline._prepare_latent_ids(patched).to(DEVICE)  # noqa: SLF001
-        latents = self.pipeline._pack_latents(patched)  # noqa: SLF001
-
-        conditioning = {
-            "encoder_hidden_states": self.prompt_embeds.repeat(2, 1, 1),
-            "txt_ids": self.text_ids.repeat(2, 1, 1),
-            "img_ids": latent_ids.repeat(2, 1, 1),
-            "guidance": None,
-        }
-        return latents, conditioning
-
-    def shift_mu(self, image_seq_len: int) -> float:
-        return compute_empirical_mu(
-            image_seq_len=image_seq_len, num_steps=self.args.num_inference_steps,
-        )
-
-    def predict(
-        self, noisy_latents: torch.Tensor, timestep: torch.Tensor, conditioning: dict,
-    ) -> torch.Tensor:
-        return self.pipeline.transformer(
-            hidden_states=noisy_latents, timestep=timestep, **conditioning, return_dict=False,
-        )[0]
-
-
-class QwenImage21Backend:
-    """Qwen-Image-2.1: Qwen3-VL text encoder, unpatched RGBA latents, one joint sequence."""
-
-    # The transformer is single-stream, so these are all of its attention input projections.
-    lora_targets = ("to_q", "to_k", "to_v")
+class InteractiveDpo:
+    """Holds the pipeline, the LoRA optimizer, and one DPO update step."""
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
         # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt,
         # drop it, and move the transformer and the VAE over afterwards.
-        self.pipeline = QwenImage21Pipeline.from_pretrained(
-            args.pretrained_model, dtype=DTYPE,
-        )
+        self.pipeline = QwenImage21Pipeline.from_pretrained(PRETRAINED_MODEL, dtype=DTYPE)
         self.pipeline.text_encoder.to(DEVICE)
         with torch.no_grad():
             self.prompt_embeds, prompt_embeds_mask, self.image_pad_mask = (
                 self.pipeline.encode_prompt(prompt=args.prompt, device=DEVICE)
             )
-            self.negative_prompt_embeds, negative_prompt_embeds_mask, _ = (
-                self.pipeline.encode_prompt(prompt="", device=DEVICE)
-            )
         # A single prompt has no padding, for which encode_prompt returns no mask at all.
         assert prompt_embeds_mask is None
-        assert negative_prompt_embeds_mask is None
         self.pipeline.text_encoder = None
         gc.collect()
         torch.cuda.empty_cache()
         self.pipeline.to(DEVICE)
-
-    def sample(self, generator: torch.Generator) -> Image.Image:
-        # The pipeline warns about a negative prompt it would ignore, so only pass it with CFG on.
-        use_cfg = self.args.guidance_scale > 1.0
-        return self.pipeline(
-            prompt_embeds=self.prompt_embeds,
-            negative_prompt_embeds=self.negative_prompt_embeds if use_cfg else None,
-            true_cfg_scale=self.args.guidance_scale,
-            height=self.args.resolution,
-            width=self.args.resolution,
-            num_inference_steps=self.args.num_inference_steps,
-            generator=generator,
-        ).images[0]
-
-    @torch.no_grad()
-    def encode_pair(self, winner: Image.Image, loser: Image.Image) -> tuple[torch.Tensor, dict]:
-        """Packed latents of [winner ; loser] and the conditioning shared by both."""
-        # The VAE reads RGBA (and the pipeline returns RGBA), with a length-1 frame axis.
-        pixel_values = to_pixel_values([winner, loser], "RGBA").unsqueeze(2)
-        latents = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
-        _, channels, _, height, width = latents.shape
-        packed = self.pipeline._pack_latents(latents, 2, channels, height, width)  # noqa: SLF001
-
-        # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
-        # latent tokens, appended after the prompt.
-        img_mask = torch.cat(
-            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
-        )
-        conditioning = {
-            "encoder_hidden_states": self.prompt_embeds.repeat(2, 1, 1),
-            "img_shapes": [[(1, height, width)]] * 2,
-            "img_mask": img_mask.repeat(2, 1),
-        }
-        return packed, conditioning
-
-    def shift_mu(self, image_seq_len: int) -> float:
-        config = self.pipeline.scheduler.config
-        return calculate_shift(
-            image_seq_len,
-            config.base_image_seq_len,
-            config.max_image_seq_len,
-            config.base_shift,
-            config.max_shift,
-        )
-
-    def predict(
-        self, noisy_latents: torch.Tensor, timestep: torch.Tensor, conditioning: dict,
-    ) -> torch.Tensor:
-        output = self.pipeline.transformer(
-            hidden_states=noisy_latents, timestep=timestep, **conditioning, return_dict=False,
-        )[0]
-        # The output spans the whole joint text/image sequence; the target image is its tail.
-        return output[:, -noisy_latents.shape[1]:]
-
-
-BACKENDS = {
-    "Flux2KleinPipeline": Flux2KleinBackend,
-    "QwenImage21Pipeline": QwenImage21Backend,
-}
-
-
-def load_backend(args: argparse.Namespace) -> Flux2KleinBackend | QwenImage21Backend:
-    class_name = DiffusionPipeline.load_config(args.pretrained_model)["_class_name"]
-    assert class_name in BACKENDS, f"{class_name} is not supported; use one of {list(BACKENDS)}"
-    return BACKENDS[class_name](args)
-
-
-class InteractiveDpo:
-    """Holds the pipeline, the LoRA optimizer, and one DPO update step."""
-
-    def __init__(self, args: argparse.Namespace) -> None:
-        self.args = args
-        self.backend = load_backend(args)
-        self.pipeline = self.backend.pipeline
         self.pipeline.set_progress_bar_config(disable=True)
         self.transformer = self.pipeline.transformer
         self.scheduler = self.pipeline.scheduler
@@ -271,7 +102,9 @@ class InteractiveDpo:
                 r=args.lora_rank,
                 lora_alpha=args.lora_rank,
                 init_lora_weights="gaussian",
-                target_modules=list(self.backend.lora_targets),
+                # The transformer is single-stream, so these are all of its attention input
+                # projections.
+                target_modules=["to_q", "to_k", "to_v"],
             ),
         )
         if args.resume_lora is not None:
@@ -293,23 +126,52 @@ class InteractiveDpo:
         base = self.args.base_seed + 2 * self.round_index
         return base, base + 1
 
+    def sample(self, generator: torch.Generator) -> Image.Image:
+        return self.pipeline(
+            prompt_embeds=self.prompt_embeds,
+            true_cfg_scale=1.0,
+            height=self.args.resolution,
+            width=self.args.resolution,
+            num_inference_steps=self.args.num_inference_steps,
+            generator=generator,
+        ).images[0]
+
     @torch.no_grad()
     def generate_pair(self) -> tuple[Image.Image, Image.Image]:
         """Two samples of the current model for the same prompt, with different seeds."""
         seeds = self.round_seeds()
         print(f"round {self.round_index}: seeds={seeds}")
         images = [
-            self.backend.sample(torch.Generator(device=DEVICE).manual_seed(seed))
+            self.sample(torch.Generator(device=DEVICE).manual_seed(seed))
             for seed in seeds
         ]
         return images[0], images[1]
+
+    def shift_mu(self, image_seq_len: int) -> float:
+        config = self.pipeline.scheduler.config
+        return calculate_shift(
+            image_seq_len,
+            config.base_image_seq_len,
+            config.max_image_seq_len,
+            config.base_shift,
+            config.max_shift,
+        )
 
     def sample_sigma(self, image_seq_len: int) -> torch.Tensor:
         """One sigma in (0, 1), logit-normal and shifted the same way inference shifts it."""
         u = torch.sigmoid(
             torch.randn(1, device=DEVICE) * self.args.logit_std + self.args.logit_mean,
         )
-        return self.scheduler.time_shift(self.backend.shift_mu(image_seq_len), 1.0, u)
+        return self.scheduler.time_shift(self.shift_mu(image_seq_len), 1.0, u)
+
+    def predict(
+        self, noisy_latents: torch.Tensor, timestep: torch.Tensor, conditioning: dict,
+    ) -> torch.Tensor:
+        output = self.pipeline.transformer(
+            hidden_states=noisy_latents, timestep=timestep, **conditioning, return_dict=False,
+        )[0]
+        # The output spans the whole joint text/image sequence; the target image is its tail.
+        return output[:, -noisy_latents.shape[1]:]
 
     def dpo_step(self, latents: torch.Tensor, conditioning: dict) -> tuple[float, float]:
         # The winner and its loser must see identical noise and sigma.
@@ -320,10 +182,10 @@ class InteractiveDpo:
         target = noise - latents
         timestep = sigma.repeat(2)
 
-        model_pred = self.backend.predict(noisy_latents, timestep, conditioning)
+        model_pred = self.predict(noisy_latents, timestep, conditioning)
         model_diff = win_minus_lose_error(model_pred, target)
         with torch.no_grad(), reference_model(self.transformer):
-            ref_pred = self.backend.predict(noisy_latents, timestep, conditioning)
+            ref_pred = self.predict(noisy_latents, timestep, conditioning)
             ref_diff = win_minus_lose_error(ref_pred, target)
 
         logits = -self.args.beta_dpo * (model_diff - ref_diff)
@@ -335,9 +197,30 @@ class InteractiveDpo:
         self.optimizer.zero_grad(set_to_none=True)
         return loss.item(), (logits > 0).float().mean().item()
 
+    @torch.no_grad()
+    def encode_pair(self, winner: Image.Image, loser: Image.Image) -> tuple[torch.Tensor, dict]:
+        """Packed latents of [winner ; loser] and the conditioning shared by both."""
+        # The VAE reads RGBA (and the pipeline returns RGBA), with a length-1 frame axis.
+        pixel_values = to_pixel_values([winner, loser]).unsqueeze(2)
+        latents = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
+        _, channels, _, height, width = latents.shape
+        packed = self.pipeline._pack_latents(latents, 2, channels, height, width)  # noqa: SLF001
+
+        # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
+        # latent tokens, appended after the prompt.
+        img_mask = torch.cat(
+            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
+        )
+        conditioning = {
+            "encoder_hidden_states": self.prompt_embeds.repeat(2, 1, 1),
+            "img_shapes": [[(1, height, width)]] * 2,
+            "img_mask": img_mask.repeat(2, 1),
+        }
+        return packed, conditioning
+
     def learn_from(self, winner: Image.Image, loser: Image.Image) -> tuple[float, float]:
         """Run `steps_per_pair` DPO steps on one human-labeled pair."""
-        latents, conditioning = self.backend.encode_pair(winner, loser)
+        latents, conditioning = self.encode_pair(winner, loser)
         losses, accuracies = [], []
         for _ in range(self.args.steps_per_pair):
             loss, accuracy = self.dpo_step(latents, conditioning)
@@ -368,20 +251,10 @@ class InteractiveDpo:
         return self.args.results_dir / weight_name
 
 
-def to_pixel_values(images: list[Image.Image], mode: str) -> torch.Tensor:
-    """The images as one [-1, 1] batch on the GPU."""
-    return torch.stack([TO_TENSOR(image.convert(mode)) for image in images]).to(DEVICE, dtype=DTYPE)
-
-
-def count_prompt_tokens(tokenizer, prompt: str) -> int:
-    """Token count of the prompt as the pipeline feeds it to Qwen3 (chat template included)."""
-    text = tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}],
-        tokenize=False,
-        add_generation_prompt=True,
-        enable_thinking=False,
-    )
-    return len(tokenizer(text).input_ids)
+def to_pixel_values(images: list[Image.Image]) -> torch.Tensor:
+    """The images as one RGBA [-1, 1] batch on the GPU."""
+    pixel_values = torch.stack([TO_TENSOR(image.convert("RGBA")) for image in images])
+    return pixel_values.to(DEVICE, dtype=DTYPE)
 
 
 @contextmanager
