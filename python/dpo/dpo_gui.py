@@ -22,6 +22,7 @@ With LoRA the reference model is free: it is the same transformer with the adapt
 
 import argparse
 import gc
+import time
 import tkinter as tk
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -141,10 +142,14 @@ class InteractiveDpo:
         """Two samples of the current model for the same prompt, with different seeds."""
         seeds = self.round_seeds()
         print(f"round {self.round_index}: seeds={seeds}")
+        start_time = time.time()
         images = [
             self.sample(torch.Generator(device=DEVICE).manual_seed(seed))
             for seed in seeds
         ]
+        end_time = time.time()
+        elapsed = end_time - start_time
+        print(f"round {self.round_index}: {elapsed:.2f} seconds")
         return images[0], images[1]
 
     def shift_mu(self, image_seq_len: int) -> float:
