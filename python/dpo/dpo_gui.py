@@ -256,7 +256,7 @@ class InteractiveDpo:
         return self.session_dir / weight_name
 
     def save_image(self, image: Image.Image, side: str) -> Path:
-        """Save the preferred candidate of the current round at its generated resolution."""
+        """Save one candidate of the current round at its generated resolution."""
         path = self.session_dir / f"round{self.round_index:04d}_{side}_{timestamp()}.png"
         image.save(path)
         return path
@@ -313,6 +313,17 @@ class DpoWindow:
         self.canvases = [tk.Label(image_frame) for _ in range(2)]
         for index, canvas in enumerate(self.canvases):
             canvas.grid(row=0, column=index, padx=6)
+        # Saves a candidate without choosing it, e.g. to keep the one that is not preferred.
+        self.image_save_buttons = [
+            tk.Button(
+                image_frame, text="左の画像を保存", width=14, command=lambda: self.on_save_image(0),
+            ),
+            tk.Button(
+                image_frame, text="右の画像を保存", width=14, command=lambda: self.on_save_image(1),
+            ),
+        ]
+        for index, button in enumerate(self.image_save_buttons):
+            button.grid(row=1, column=index, pady=(4, 0))
 
         button_frame = tk.Frame(self.root)
         button_frame.pack(pady=8)
@@ -334,6 +345,7 @@ class DpoWindow:
         ]
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=4)
+        self.buttons += self.image_save_buttons
 
         self.status = tk.Label(self.root, text="", font=("", 10))
         self.status.pack(pady=(0, 10))
@@ -386,6 +398,11 @@ class DpoWindow:
         path = self.trainer.save_lora()
         print(f"saved LoRA weights to {path}")
         self.set_ready(f"round {self.trainer.round_index}: saved {path.name}")
+
+    def on_save_image(self, index: int) -> None:
+        path = self.trainer.save_image(self.images[index], ("left", "right")[index])
+        print(f"saved image to {path}")
+        self.status.config(text=f"round {self.trainer.round_index}: saved {path.name}")
 
     def run(self) -> None:
         self.root.mainloop()
