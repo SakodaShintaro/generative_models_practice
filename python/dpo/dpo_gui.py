@@ -77,6 +77,9 @@ class InteractiveDpo:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        # Everything this session saves (LoRA weights, images) goes into one directory per launch.
+        self.session_dir = args.results_dir / timestamp()
+        self.session_dir.mkdir(parents=True)
         # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
         # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt,
         # drop it, and move the transformer and the VAE over afterwards.
@@ -245,15 +248,24 @@ class InteractiveDpo:
         print(f"resumed LoRA weights from {path}")
 
     def save_lora(self) -> Path:
-        self.args.results_dir.mkdir(parents=True, exist_ok=True)
-        weight_name = f"{datetime.now(tz=UTC).astimezone().strftime('%Y%m%d_%H%M%S')}.safetensors"
+        weight_name = f"{timestamp()}.safetensors"
         type(self.pipeline).save_lora_weights(
-            str(self.args.results_dir),
+            str(self.session_dir),
             transformer_lora_layers=get_peft_model_state_dict(self.transformer),
             weight_name=weight_name,
             safe_serialization=True,
         )
-        return self.args.results_dir / weight_name
+        return self.session_dir / weight_name
+
+    def save_image(self, image: Image.Image, side: str) -> Path:
+        """Save one candidate of the current round at its generated resolution."""
+        path = self.session_dir / f"round{self.round_index:04d}_{side}_{timestamp()}.png"
+        image.save(path)
+        return path
+
+
+def timestamp() -> str:
+    return datetime.now(tz=UTC).astimezone().strftime("%Y%m%d_%H%M%S")
 
 
 def to_pixel_values(images: list[Image.Image]) -> torch.Tensor:
@@ -303,6 +315,16 @@ class DpoWindow:
         self.canvases = [tk.Label(image_frame) for _ in range(2)]
         for index, canvas in enumerate(self.canvases):
             canvas.grid(row=0, column=index, padx=6)
+        self.image_save_buttons = [
+            tk.Button(
+                image_frame, text="左の画像を保存", width=14, command=lambda: self.on_save_image(0),
+            ),
+            tk.Button(
+                image_frame, text="右の画像を保存", width=14, command=lambda: self.on_save_image(1),
+            ),
+        ]
+        for index, button in enumerate(self.image_save_buttons):
+            button.grid(row=1, column=index, pady=(4, 0))
 
         button_frame = tk.Frame(self.root)
         button_frame.pack(pady=8)
@@ -320,10 +342,11 @@ class DpoWindow:
                 width=14,
                 command=lambda: self.on_choice(1),
             ),
-            tk.Button(button_frame, text="保存", width=14, command=self.on_save),
+            tk.Button(button_frame, text="LoRAを保存", width=14, command=self.on_save),
         ]
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=4)
+        self.buttons += self.image_save_buttons
 
         self.status = tk.Label(self.root, text="", font=("", 10))
         self.status.pack(pady=(0, 10))
@@ -375,13 +398,17 @@ class DpoWindow:
         print(f"saved LoRA weights to {path}")
         self.set_ready(f"round {self.trainer.round_index}: saved {path.name}")
 
+    def on_save_image(self, index: int) -> None:
+        path = self.trainer.save_image(self.images[index], ("left", "right")[index])
+        print(f"saved image to {path}")
+        self.status.config(text=f"round {self.trainer.round_index}: saved {path.name}")
+
     def run(self) -> None:
         self.root.mainloop()
 
 
 def main() -> None:
     args = parse_args()
-    args.results_dir.mkdir(parents=True, exist_ok=True)
     DpoWindow(InteractiveDpo(args)).run()
 
 
