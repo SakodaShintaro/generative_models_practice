@@ -18,6 +18,13 @@ and the target is the velocity `v = eps - x_0`. It is sampled without classifier
 
 With LoRA the reference model is free: it is the same transformer with the adapters disabled
 (`transformer.disable_adapters()`), so only one set of weights is held in memory.
+
+Optional `--image` reference images condition every sample, as in `qwen_generate.py`, e.g. to
+learn preferences about one person's poses. They are encoded once at startup, both by the
+Qwen3-VL text encoder (next to the prompt) and by the VAE, whose latent tokens are placed before
+the target image in every forward pass, for sampling and for the DPO steps alike. They are never
+noised and never enter the loss. The pipeline's `__call__` cannot take cached prompt embeddings
+together with condition images, so sampling runs its own denoising loop.
 """
 
 import argparse
@@ -28,10 +35,16 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from diffusers import QwenImage21Pipeline
-from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import calculate_shift
+from diffusers.models.transformers.transformer_qwenimage21 import QwenImage21KVCache
+from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import (
+    calculate_dimensions,
+    calculate_shift,
+    retrieve_timesteps,
+)
 from diffusers.training_utils import cast_training_params
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
@@ -45,14 +58,16 @@ torch.backends.cudnn.allow_tf32 = True
 DEVICE = torch.device("cuda")
 DTYPE = torch.bfloat16
 PRETRAINED_MODEL = "Qwen/Qwen-Image-2.1"
+MAX_REFERENCE_IMAGES = 10
 TO_TENSOR = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, required=True)
+    parser.add_argument("--image", type=Path, nargs="*", default=[])
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--resolution", type=int, default=1024)
+    parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=256)
     parser.add_argument("--num_inference_steps", type=int, default=40)
     parser.add_argument("--steps_per_pair", type=int, default=4)
@@ -79,14 +94,24 @@ class InteractiveDpo:
         # Everything this session saves (LoRA weights, images) goes into one directory per launch.
         self.session_dir = args.results_dir / timestamp()
         self.session_dir.mkdir(parents=True)
+        # The target is (resolution / 16)^2 latent tokens, grouped 2x2 into vision-language slots.
+        assert args.resolution % 32 == 0, "--resolution must be a multiple of 32"
+        assert len(args.image) <= MAX_REFERENCE_IMAGES, (
+            f"Qwen-Image-2.1 takes at most {MAX_REFERENCE_IMAGES} reference images"
+        )
+        references = [resize_reference(path, args.resolution) for path in args.image]
         # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
-        # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt,
-        # drop it, and move the transformer and the VAE over afterwards.
+        # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt
+        # (and its reference images, which stay fixed for the session), drop it, and move the
+        # transformer and the VAE over afterwards.
         self.pipeline = QwenImage21Pipeline.from_pretrained(PRETRAINED_MODEL, dtype=DTYPE)
         self.pipeline.text_encoder.to(DEVICE)
         with torch.no_grad():
+            # encode_prompt takes None, not an empty list, for text-to-image.
             self.prompt_embeds, prompt_embeds_mask, self.image_pad_mask = (
-                self.pipeline.encode_prompt(prompt=args.prompt, device=DEVICE)
+                self.pipeline.encode_prompt(
+                    prompt=args.prompt, image=references or None, device=DEVICE,
+                )
             )
         # A single prompt has no padding, for which encode_prompt returns no mask at all.
         assert prompt_embeds_mask is None
@@ -94,9 +119,12 @@ class InteractiveDpo:
         gc.collect()
         torch.cuda.empty_cache()
         self.pipeline.to(DEVICE)
-        self.pipeline.set_progress_bar_config(disable=True)
         self.transformer = self.pipeline.transformer
         self.scheduler = self.pipeline.scheduler
+        # sample() caches the keys and values of the prompt and the reference images, which is only
+        # valid because they are modulated with t = 0 at every step.
+        assert self.transformer.config.causal_condition
+        self.reference_latents, self.reference_shapes = self.encode_references(references)
 
         self.transformer.requires_grad_(False)
         self.pipeline.vae.requires_grad_(False)
@@ -128,15 +156,80 @@ class InteractiveDpo:
         base = self.args.base_seed + 2 * self.round_index
         return base, base + 1
 
+    @torch.no_grad()
     def sample(self, generator: torch.Generator) -> Image.Image:
-        return self.pipeline(
-            prompt_embeds=self.prompt_embeds,
-            true_cfg_scale=1.0,
-            height=self.args.resolution,
-            width=self.args.resolution,
-            num_inference_steps=self.args.num_inference_steps,
-            generator=generator,
-        ).images[0]
+        """The pipeline's denoising loop without guidance, on the cached prompt and references."""
+        size = self.args.resolution // self.pipeline.vae_scale_factor
+        channels = self.transformer.config.in_channels
+        latents = torch.randn(
+            (1, 1, channels, size, size), generator=generator, device=DEVICE, dtype=DTYPE,
+        )
+        latents = self.pipeline._pack_latents(latents, 1, channels, size, size)  # noqa: SLF001
+        num_steps = self.args.num_inference_steps
+        timesteps, _ = retrieve_timesteps(
+            self.scheduler,
+            num_steps,
+            DEVICE,
+            sigmas=np.linspace(1.0, 1 / num_steps, num_steps),
+            mu=self.shift_mu(latents.shape[1]),
+        )
+        self.scheduler.set_begin_index(0)
+
+        conditioning = self.conditioning(1, size, size)
+        # The first step fills the cache with the prompt and the references; later steps only
+        # recompute the target image's tokens.
+        kv_cache = QwenImage21KVCache(len(self.transformer.transformer_blocks))
+        for index, t in enumerate(timesteps):
+            velocity = self.predict(
+                latents,
+                # Cast before scaling, as the pipeline does, so the timesteps round identically.
+                t.expand(1).to(DTYPE) / 1000,
+                conditioning,
+                kv_cache,
+                "extract" if index == 0 else "cached",
+            )
+            latents = self.scheduler.step(velocity, t, latents, return_dict=False)[0]
+        return self.decode(latents, size)
+
+    def decode(self, latents: torch.Tensor, size: int) -> Image.Image:
+        """Packed latents of one image back to a PIL image, as the pipeline does."""
+        vae = self.pipeline.vae
+        latents = latents.transpose(1, 2).reshape(1, -1, 1, size, size).to(vae.dtype)
+        stats_shape = (1, vae.config.z_dim, 1, 1, 1)
+        latents_mean = torch.tensor(vae.config.latents_mean).view(stats_shape).to(latents)
+        latents_std = torch.tensor(vae.config.latents_std).view(stats_shape).to(latents)
+        image = vae.decode(latents * latents_std + latents_mean, return_dict=False)[0][:, :, 0]
+        return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
+
+    @torch.no_grad()
+    def encode_references(
+        self, references: list[Image.Image],
+    ) -> tuple[torch.Tensor, list[tuple[int, int, int]]]:
+        """Packed latents of all reference images, one after another, and their token shapes."""
+        packed = [
+            torch.zeros(1, 0, self.transformer.config.in_channels, device=DEVICE, dtype=DTYPE),
+        ]
+        shapes = []
+        for reference in references:
+            pixel_values = to_pixel_values([reference]).unsqueeze(2)
+            latents = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
+            _, channels, _, height, width = latents.shape
+            packed.append(self.pipeline._pack_latents(latents, 1, channels, height, width))  # noqa: SLF001
+            shapes.append((1, height, width))
+        return torch.cat(packed, dim=1), shapes
+
+    def conditioning(self, batch_size: int, height: int, width: int) -> dict:
+        """Transformer inputs shared by `batch_size` targets of `height` x `width` latent tokens."""
+        # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
+        # latent tokens, appended after the prompt (which holds the references' slots).
+        img_mask = torch.cat(
+            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
+        )
+        return {
+            "encoder_hidden_states": self.prompt_embeds.repeat(batch_size, 1, 1),
+            "img_shapes": [[*self.reference_shapes, (1, height, width)]] * batch_size,
+            "img_mask": img_mask.repeat(batch_size, 1),
+        }
 
     @torch.no_grad()
     def generate_pair(self) -> tuple[Image.Image, Image.Image]:
@@ -171,10 +264,22 @@ class InteractiveDpo:
         return self.scheduler.time_shift(self.shift_mu(image_seq_len), 1.0, u)
 
     def predict(
-        self, noisy_latents: torch.Tensor, timestep: torch.Tensor, conditioning: dict,
+        self,
+        noisy_latents: torch.Tensor,
+        timestep: torch.Tensor,
+        conditioning: dict,
+        kv_cache: QwenImage21KVCache | None,
+        kv_cache_mode: str | None,
     ) -> torch.Tensor:
-        output = self.pipeline.transformer(
-            hidden_states=noisy_latents, timestep=timestep, **conditioning, return_dict=False,
+        # The clean reference latents go before the target image.
+        references = self.reference_latents.repeat(noisy_latents.shape[0], 1, 1)
+        output = self.transformer(
+            hidden_states=torch.cat([references, noisy_latents], dim=1),
+            timestep=timestep,
+            **conditioning,
+            kv_cache=kv_cache,
+            kv_cache_mode=kv_cache_mode,
+            return_dict=False,
         )[0]
         # The output spans the whole joint text/image sequence; the target image is its tail.
         return output[:, -noisy_latents.shape[1]:]
@@ -188,10 +293,10 @@ class InteractiveDpo:
         target = noise - latents
         timestep = sigma.repeat(2)
 
-        model_pred = self.predict(noisy_latents, timestep, conditioning)
+        model_pred = self.predict(noisy_latents, timestep, conditioning, None, None)
         model_diff = win_minus_lose_error(model_pred, target)
         with torch.no_grad(), reference_model(self.transformer):
-            ref_pred = self.predict(noisy_latents, timestep, conditioning)
+            ref_pred = self.predict(noisy_latents, timestep, conditioning, None, None)
             ref_diff = win_minus_lose_error(ref_pred, target)
 
         logits = -self.args.beta_dpo * (model_diff - ref_diff)
@@ -211,18 +316,7 @@ class InteractiveDpo:
         latents = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
         _, channels, _, height, width = latents.shape
         packed = self.pipeline._pack_latents(latents, 2, channels, height, width)  # noqa: SLF001
-
-        # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
-        # latent tokens, appended after the prompt.
-        img_mask = torch.cat(
-            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
-        )
-        conditioning = {
-            "encoder_hidden_states": self.prompt_embeds.repeat(2, 1, 1),
-            "img_shapes": [[(1, height, width)]] * 2,
-            "img_mask": img_mask.repeat(2, 1),
-        }
-        return packed, conditioning
+        return packed, self.conditioning(2, height, width)
 
     def learn_from(self, winner: Image.Image, loser: Image.Image) -> tuple[float, float]:
         """Run `steps_per_pair` DPO steps on one human-labeled pair."""
@@ -264,6 +358,18 @@ class InteractiveDpo:
 
 def timestamp() -> str:
     return datetime.now(tz=UTC).astimezone().strftime("%Y%m%d_%H%M%S")
+
+
+def resize_reference(path: Path, resolution: int) -> Image.Image:
+    """A reference image resized as the pipeline does: its aspect ratio, about resolution^2 pixels.
+
+    The size is a multiple of 32, so the text encoder (one slot per 32x32 pixels) and the VAE (one
+    token per 16x16 pixels) agree on the 2x2 tokens per slot without resizing it again.
+    """
+    assert path.is_file(), f"{path} not found"
+    image = Image.open(path).convert("RGBA")
+    width, height, _ = calculate_dimensions(resolution * resolution, image.width / image.height)
+    return image.resize((width, height), Image.LANCZOS)
 
 
 def to_pixel_values(images: list[Image.Image]) -> torch.Tensor:
