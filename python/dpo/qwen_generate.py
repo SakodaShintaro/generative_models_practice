@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", type=str, required=True)
     parser.add_argument("--pretrained_model", type=str, default="Qwen/Qwen-Image-2.1")
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--num_images", type=int, default=4)
+    parser.add_argument("--num_images", type=int, default=1)
     parser.add_argument("--base_seed", type=int, default=-1)
     parser.add_argument("--num_inference_steps", type=int, default=40)
     # true_cfg_scale. Qwen-Image-2.1 is meant to be sampled without guidance (1.0).
