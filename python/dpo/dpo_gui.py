@@ -19,6 +19,11 @@ and the target is the velocity `v = eps - x_0`. It is sampled without classifier
 With LoRA the reference model is free: it is the same transformer with the adapters disabled
 (`transformer.disable_adapters()`), so only one set of weights is held in memory.
 
+With two visible GPUs (e.g. no `CUDA_VISIBLE_DEVICES`), the two candidates of a round are sampled
+in parallel, one per GPU. The second GPU holds a copy of the transformer and the VAE that only
+samples; training stays on the first GPU, and the LoRA weights are copied over after each update.
+`CUDA_VISIBLE_DEVICES=0` falls back to sampling both candidates one after the other on one GPU.
+
 Optional `--image` reference images condition every sample, as in `qwen_generate.py`, e.g. to
 learn preferences about one person's poses. They are encoded once at startup, both by the
 Qwen3-VL text encoder (next to the prompt) and by the VAE, whose latent tokens are placed before
@@ -28,17 +33,20 @@ together with condition images, so sampling runs its own denoising loop.
 """
 
 import argparse
+import copy
 import gc
 import time
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import QwenImage21Pipeline
+from diffusers import FlowMatchEulerDiscreteScheduler, QwenImage21Pipeline
 from diffusers.models.transformers.transformer_qwenimage21 import QwenImage21KVCache
 from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import (
     calculate_dimensions,
@@ -55,10 +63,12 @@ from torchvision import transforms
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-DEVICE = torch.device("cuda")
+# The GPU that trains; it also samples, alone or next to a second GPU.
+DEVICE = torch.device("cuda:0")
 DTYPE = torch.bfloat16
 PRETRAINED_MODEL = "Qwen/Qwen-Image-2.1"
 MAX_REFERENCE_IMAGES = 10
+CANDIDATES_PER_ROUND = 2
 TO_TENSOR = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
 
 
@@ -67,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", type=str, required=True)
     parser.add_argument("--image", type=Path, nargs="*", default=[])
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
-    parser.add_argument("--resolution", type=int, default=1024)
+    parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=512)
     parser.add_argument("--num_inference_steps", type=int, default=40)
     parser.add_argument("--steps_per_pair", type=int, default=1)
@@ -84,6 +94,20 @@ def parse_args() -> argparse.Namespace:
 #################################################################################
 #                                 Model / training                              #
 #################################################################################
+
+
+@dataclass
+class Replica:
+    """Everything one GPU needs to sample: the models and the cached prompt and references."""
+
+    device: torch.device
+    transformer: torch.nn.Module
+    vae: torch.nn.Module
+    # The scheduler keeps the current step index, so each concurrent sampler needs its own.
+    scheduler: FlowMatchEulerDiscreteScheduler
+    prompt_embeds: torch.Tensor
+    image_pad_mask: torch.Tensor
+    reference_latents: torch.Tensor
 
 
 class InteractiveDpo:
@@ -108,36 +132,39 @@ class InteractiveDpo:
         self.pipeline.text_encoder.to(DEVICE)
         with torch.no_grad():
             # encode_prompt takes None, not an empty list, for text-to-image.
-            self.prompt_embeds, prompt_embeds_mask, self.image_pad_mask = (
-                self.pipeline.encode_prompt(
-                    prompt=args.prompt, image=references or None, device=DEVICE,
-                )
+            prompt_embeds, prompt_embeds_mask, image_pad_mask = self.pipeline.encode_prompt(
+                prompt=args.prompt, image=references or None, device=DEVICE,
             )
         # A single prompt has no padding, for which encode_prompt returns no mask at all.
         assert prompt_embeds_mask is None
         self.pipeline.text_encoder = None
         gc.collect()
         torch.cuda.empty_cache()
+        self.pipeline.transformer.requires_grad_(False)
+        self.pipeline.vae.requires_grad_(False)
+        # One GPU per candidate at most. Two transformers do not fit on one GPU, so the copies for
+        # the other GPUs are made while everything is still on the CPU.
+        devices = [DEVICE] + [
+            torch.device(f"cuda:{index}")
+            for index in range(1, min(torch.cuda.device_count(), CANDIDATES_PER_ROUND))
+        ]
+        print(f"sampling on {[str(device) for device in devices]}")
+        copies = [
+            (
+                copy.deepcopy(self.pipeline.transformer).to(device),
+                copy.deepcopy(self.pipeline.vae).to(device),
+            )
+            for device in devices[1:]
+        ]
         self.pipeline.to(DEVICE)
         self.transformer = self.pipeline.transformer
         self.scheduler = self.pipeline.scheduler
         # sample() caches the keys and values of the prompt and the reference images, which is only
         # valid because they are modulated with t = 0 at every step.
         assert self.transformer.config.causal_condition
-        self.reference_latents, self.reference_shapes = self.encode_references(references)
+        reference_latents, self.reference_shapes = self.encode_references(references)
 
-        self.transformer.requires_grad_(False)
-        self.pipeline.vae.requires_grad_(False)
-        self.transformer.add_adapter(
-            LoraConfig(
-                r=args.lora_rank,
-                lora_alpha=args.lora_rank,
-                init_lora_weights="gaussian",
-                # The transformer is single-stream, so these are all of its attention input
-                # projections.
-                target_modules=["to_q", "to_k", "to_v"],
-            ),
-        )
+        self.transformer.add_adapter(lora_config(args.lora_rank))
         if args.resume_lora is not None:
             self.load_lora(args.resume_lora)
         cast_training_params(self.transformer, dtype=torch.float32)
@@ -146,7 +173,45 @@ class InteractiveDpo:
         self.optimizer = torch.optim.AdamW(
             self.lora_params, lr=args.learning_rate, weight_decay=1e-2,
         )
+
+        # The first replica is the trained transformer itself.
+        self.replicas = [
+            Replica(
+                DEVICE,
+                self.transformer,
+                self.pipeline.vae,
+                self.scheduler,
+                prompt_embeds,
+                image_pad_mask,
+                reference_latents,
+            ),
+        ]
+        for device, (transformer, vae) in zip(devices[1:], copies, strict=True):
+            # The same float32 adapters as the trained transformer, so both sample alike; their
+            # weights are overwritten by sync_replicas.
+            transformer.add_adapter(lora_config(args.lora_rank))
+            cast_training_params(transformer, dtype=torch.float32)
+            transformer.requires_grad_(False)
+            self.replicas.append(
+                Replica(
+                    device,
+                    transformer,
+                    vae,
+                    copy.deepcopy(self.scheduler),
+                    prompt_embeds.to(device),
+                    image_pad_mask.to(device),
+                    reference_latents.to(device),
+                ),
+            )
+        self.sync_replicas()
         self.round_index = 0
+
+    def sync_replicas(self) -> None:
+        """Copy the trained LoRA weights to the sampling-only replicas on the other GPUs."""
+        state_dict = get_peft_model_state_dict(self.transformer)
+        for replica in self.replicas[1:]:
+            result = set_peft_model_state_dict(replica.transformer, state_dict)
+            assert not result.unexpected_keys, f"unexpected keys: {result.unexpected_keys}"
 
     def round_seeds(self) -> tuple[int, int]:
         """The two seeds of this round, one per candidate."""
@@ -157,30 +222,33 @@ class InteractiveDpo:
         return base, base + 1
 
     @torch.no_grad()
-    def sample(self, generator: torch.Generator) -> Image.Image:
+    def sample(self, replica: Replica, seed: int) -> Image.Image:
         """The pipeline's denoising loop without guidance, on the cached prompt and references."""
         size = self.args.resolution // self.pipeline.vae_scale_factor
-        channels = self.transformer.config.in_channels
+        channels = replica.transformer.config.in_channels
+        # The same seed gives the same noise on either GPU.
+        generator = torch.Generator(device=replica.device).manual_seed(seed)
         latents = torch.randn(
-            (1, 1, channels, size, size), generator=generator, device=DEVICE, dtype=DTYPE,
+            (1, 1, channels, size, size), generator=generator, device=replica.device, dtype=DTYPE,
         )
         latents = self.pipeline._pack_latents(latents, 1, channels, size, size)  # noqa: SLF001
         num_steps = self.args.num_inference_steps
         timesteps, _ = retrieve_timesteps(
-            self.scheduler,
+            replica.scheduler,
             num_steps,
-            DEVICE,
+            replica.device,
             sigmas=np.linspace(1.0, 1 / num_steps, num_steps),
             mu=self.shift_mu(latents.shape[1]),
         )
-        self.scheduler.set_begin_index(0)
+        replica.scheduler.set_begin_index(0)
 
-        conditioning = self.conditioning(1, size, size)
+        conditioning = self.conditioning(replica, 1, size, size)
         # The first step fills the cache with the prompt and the references; later steps only
         # recompute the target image's tokens.
-        kv_cache = QwenImage21KVCache(len(self.transformer.transformer_blocks))
+        kv_cache = QwenImage21KVCache(len(replica.transformer.transformer_blocks))
         for index, t in enumerate(timesteps):
             velocity = self.predict(
+                replica,
                 latents,
                 # Cast before scaling, as the pipeline does, so the timesteps round identically.
                 t.expand(1).to(DTYPE) / 1000,
@@ -188,12 +256,12 @@ class InteractiveDpo:
                 kv_cache,
                 "extract" if index == 0 else "cached",
             )
-            latents = self.scheduler.step(velocity, t, latents, return_dict=False)[0]
-        return self.decode(latents, size)
+            latents = replica.scheduler.step(velocity, t, latents, return_dict=False)[0]
+        return self.decode(replica, latents, size)
 
-    def decode(self, latents: torch.Tensor, size: int) -> Image.Image:
+    def decode(self, replica: Replica, latents: torch.Tensor, size: int) -> Image.Image:
         """Packed latents of one image back to a PIL image, as the pipeline does."""
-        vae = self.pipeline.vae
+        vae = replica.vae
         latents = latents.transpose(1, 2).reshape(1, -1, 1, size, size).to(vae.dtype)
         stats_shape = (1, vae.config.z_dim, 1, 1, 1)
         latents_mean = torch.tensor(vae.config.latents_mean).view(stats_shape).to(latents)
@@ -218,15 +286,16 @@ class InteractiveDpo:
             shapes.append((1, height, width))
         return torch.cat(packed, dim=1), shapes
 
-    def conditioning(self, batch_size: int, height: int, width: int) -> dict:
+    def conditioning(self, replica: Replica, batch_size: int, height: int, width: int) -> dict:
         """Transformer inputs shared by `batch_size` targets of `height` x `width` latent tokens."""
         # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
         # latent tokens, appended after the prompt (which holds the references' slots).
         img_mask = torch.cat(
-            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
+            [replica.image_pad_mask, replica.image_pad_mask.new_ones(1, height * width // 4)],
+            dim=1,
         )
         return {
-            "encoder_hidden_states": self.prompt_embeds.repeat(batch_size, 1, 1),
+            "encoder_hidden_states": replica.prompt_embeds.repeat(batch_size, 1, 1),
             "img_shapes": [[*self.reference_shapes, (1, height, width)]] * batch_size,
             "img_mask": img_mask.repeat(batch_size, 1),
         }
@@ -237,10 +306,14 @@ class InteractiveDpo:
         seeds = self.round_seeds()
         print(f"round {self.round_index}: seeds={seeds}")
         start_time = time.time()
-        images = [
-            self.sample(torch.Generator(device=DEVICE).manual_seed(seed))
-            for seed in seeds
-        ]
+        # One thread per GPU: each candidate runs on its own GPU when there are two, and with one
+        # GPU the single thread samples them one after the other.
+        with ThreadPoolExecutor(max_workers=len(self.replicas)) as executor:
+            futures = [
+                executor.submit(self.sample, self.replicas[index % len(self.replicas)], seed)
+                for index, seed in enumerate(seeds)
+            ]
+            images = [future.result() for future in futures]
         end_time = time.time()
         elapsed = end_time - start_time
         print(f"round {self.round_index}: {elapsed:.2f} seconds")
@@ -265,6 +338,7 @@ class InteractiveDpo:
 
     def predict(
         self,
+        replica: Replica,
         noisy_latents: torch.Tensor,
         timestep: torch.Tensor,
         conditioning: dict,
@@ -272,8 +346,8 @@ class InteractiveDpo:
         kv_cache_mode: str | None,
     ) -> torch.Tensor:
         # The clean reference latents go before the target image.
-        references = self.reference_latents.repeat(noisy_latents.shape[0], 1, 1)
-        output = self.transformer(
+        references = replica.reference_latents.repeat(noisy_latents.shape[0], 1, 1)
+        output = replica.transformer(
             hidden_states=torch.cat([references, noisy_latents], dim=1),
             timestep=timestep,
             **conditioning,
@@ -293,10 +367,12 @@ class InteractiveDpo:
         target = noise - latents
         timestep = sigma.repeat(2)
 
-        model_pred = self.predict(noisy_latents, timestep, conditioning, None, None)
+        # Training runs on the first replica, which is the trained transformer itself.
+        trainee = self.replicas[0]
+        model_pred = self.predict(trainee, noisy_latents, timestep, conditioning, None, None)
         model_diff = win_minus_lose_error(model_pred, target)
         with torch.no_grad(), reference_model(self.transformer):
-            ref_pred = self.predict(noisy_latents, timestep, conditioning, None, None)
+            ref_pred = self.predict(trainee, noisy_latents, timestep, conditioning, None, None)
             ref_diff = win_minus_lose_error(ref_pred, target)
 
         logits = -self.args.beta_dpo * (model_diff - ref_diff)
@@ -316,7 +392,7 @@ class InteractiveDpo:
         latents = self.pipeline._encode_vae_image(image=pixel_values, generator=None)  # noqa: SLF001
         _, channels, _, height, width = latents.shape
         packed = self.pipeline._pack_latents(latents, 2, channels, height, width)  # noqa: SLF001
-        return packed, self.conditioning(2, height, width)
+        return packed, self.conditioning(self.replicas[0], 2, height, width)
 
     def learn_from(self, winner: Image.Image, loser: Image.Image) -> tuple[float, float]:
         """Run `steps_per_pair` DPO steps on one human-labeled pair."""
@@ -326,6 +402,7 @@ class InteractiveDpo:
             loss, accuracy = self.dpo_step(latents, conditioning)
             losses.append(loss)
             accuracies.append(accuracy)
+        self.sync_replicas()
         return sum(losses) / len(losses), sum(accuracies) / len(accuracies)
 
     def load_lora(self, path: Path) -> None:
@@ -358,6 +435,16 @@ class InteractiveDpo:
 
 def timestamp() -> str:
     return datetime.now(tz=UTC).astimezone().strftime("%Y%m%d_%H%M%S")
+
+
+def lora_config(rank: int) -> LoraConfig:
+    return LoraConfig(
+        r=rank,
+        lora_alpha=rank,
+        init_lora_weights="gaussian",
+        # The transformer is single-stream, so these are all of its attention input projections.
+        target_modules=["to_q", "to_k", "to_v"],
+    )
 
 
 def resize_reference(path: Path, resolution: int) -> Image.Image:
