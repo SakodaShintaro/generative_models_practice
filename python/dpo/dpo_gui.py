@@ -428,7 +428,7 @@ class InteractiveDpo:
 
     def save_image(self, image: Image.Image, side: str) -> Path:
         """Save one candidate of the current round at its generated resolution."""
-        path = self.session_dir / f"round{self.round_index:04d}_{side}_{timestamp()}.png"
+        path = self.session_dir / f"{timestamp()}_round{self.round_index:04d}_{side}.png"
         image.save(path)
         return path
 
