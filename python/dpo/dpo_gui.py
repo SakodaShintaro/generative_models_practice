@@ -92,12 +92,12 @@ MOSS_NEGATIVE_PROMPT = ""
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, required=True)
+    parser.add_argument("--results_dir", type=Path, required=True)
     parser.add_argument(
         "--pretrained_model", type=str, default="Qwen/Qwen-Image-2.1", choices=list(MODELS),
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--results_dir", type=Path, default=Path("results"))
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=512)
     # MOSS-Image recommends at least 50.
