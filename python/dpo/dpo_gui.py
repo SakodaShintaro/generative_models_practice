@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--display_size", type=int, default=512)
     # MOSS-Image recommends at least 50.
-    parser.add_argument("--num_inference_steps", type=int, default=40)
+    parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--steps_per_pair", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta_dpo", type=float, default=2500.0)
