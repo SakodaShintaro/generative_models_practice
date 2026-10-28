@@ -117,9 +117,10 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--resolution", type=int, default=512)
+    parser.add_argument("--height", type=int, default=896)
+    parser.add_argument("--width", type=int, default=512)
+    # The longer side of the thumbnails and of the right-click preview; both keep the aspect ratio.
     parser.add_argument("--thumbnail_size", type=int, default=128)
-    # The size of the right-click preview.
     parser.add_argument("--display_size", type=int, default=512)
     parser.add_argument("--max_unranked", type=int, default=50)
     # MOSS-Image recommends at least 50.
@@ -146,14 +147,17 @@ class QwenImage:
     lora_target_modules: ClassVar[list[str]] = ["to_q", "to_k", "to_v"]
 
     def __init__(self, args: argparse.Namespace) -> None:
-        # The target is (resolution / 16)^2 latent tokens, grouped 2x2 into vision-language slots.
-        assert args.resolution % 32 == 0, "--resolution must be a multiple of 32"
+        # The target is (height / 16) x (width / 16) latent tokens, grouped 2x2 into
+        # vision-language slots.
+        assert args.height % 32 == 0, "--height must be a multiple of 32"
+        assert args.width % 32 == 0, "--width must be a multiple of 32"
         assert len(args.image) <= QWEN_MAX_REFERENCE_IMAGES, (
             f"Qwen-Image-2.1 takes at most {QWEN_MAX_REFERENCE_IMAGES} reference images"
         )
-        self.resolution = args.resolution
+        self.height = args.height
+        self.width = args.width
         self.num_inference_steps = args.num_inference_steps
-        references = [resize_reference(path, args.resolution) for path in args.image]
+        references = [resize_reference(path, args.height * args.width) for path in args.image]
         # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
         # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt
         # (and its reference images, which stay fixed for the session), drop it, and move the
@@ -189,13 +193,13 @@ class QwenImage:
     @torch.no_grad()
     def sample(self, seed: int) -> Image.Image:
         """The pipeline's denoising loop without guidance, on the cached prompt and references."""
-        size = self.resolution // self.pipeline.vae_scale_factor
+        height, width = self.latent_size()
         channels = self.transformer.config.in_channels
         generator = torch.Generator(device=DEVICE).manual_seed(seed)
         latents = torch.randn(
-            (1, 1, channels, size, size), generator=generator, device=DEVICE, dtype=DTYPE,
+            (1, 1, channels, height, width), generator=generator, device=DEVICE, dtype=DTYPE,
         )
-        latents = self.pipeline._pack_latents(latents, 1, channels, size, size)  # noqa: SLF001
+        latents = self.pipeline._pack_latents(latents, 1, channels, height, width)  # noqa: SLF001
         num_steps = self.num_inference_steps
         timesteps, _ = retrieve_timesteps(
             self.scheduler,
@@ -206,7 +210,7 @@ class QwenImage:
         )
         self.scheduler.set_begin_index(0)
 
-        conditioning = self.conditioning(1, size, size)
+        conditioning = self.conditioning(1, height, width)
         # The first step fills the cache with the prompt and the references; later steps only
         # recompute the target image's tokens.
         kv_cache = QwenImage21KVCache(len(self.transformer.transformer_blocks))
@@ -220,12 +224,17 @@ class QwenImage:
                 "extract" if index == 0 else "cached",
             )
             latents = self.scheduler.step(velocity, t, latents, return_dict=False)[0]
-        return self.decode(latents, size)
+        return self.decode(latents, height, width)
 
-    def decode(self, latents: torch.Tensor, size: int) -> Image.Image:
+    def latent_size(self) -> tuple[int, int]:
+        """The target image's height and width in latent tokens."""
+        scale = self.pipeline.vae_scale_factor
+        return self.height // scale, self.width // scale
+
+    def decode(self, latents: torch.Tensor, height: int, width: int) -> Image.Image:
         """Packed latents of one image back to a PIL image, as the pipeline does."""
         vae = self.vae
-        latents = latents.transpose(1, 2).reshape(1, -1, 1, size, size).to(vae.dtype)
+        latents = latents.transpose(1, 2).reshape(1, -1, 1, height, width).to(vae.dtype)
         stats_shape = (1, vae.config.z_dim, 1, 1, 1)
         latents_mean = torch.tensor(vae.config.latents_mean).view(stats_shape).to(latents)
         latents_std = torch.tensor(vae.config.latents_std).view(stats_shape).to(latents)
@@ -289,8 +298,8 @@ class QwenImage:
 
     def velocity(self, noisy_latents: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
         """The trained transformer's prediction for a batch of noised target latents."""
-        size = self.resolution // self.pipeline.vae_scale_factor
-        conditioning = self.conditioning(noisy_latents.shape[0], size, size)
+        height, width = self.latent_size()
+        conditioning = self.conditioning(noisy_latents.shape[0], height, width)
         timestep = sigma.expand(noisy_latents.shape[0])
         return self.predict(noisy_latents, timestep, conditioning, None, None)
 
@@ -316,15 +325,15 @@ class QwenImage:
         return output[:, -noisy_latents.shape[1]:]
 
 
-def resize_reference(path: Path, resolution: int) -> Image.Image:
-    """A reference image resized as the pipeline does: its aspect ratio, about resolution^2 pixels.
+def resize_reference(path: Path, area: int) -> Image.Image:
+    """A reference image resized as the pipeline does: its aspect ratio, about `area` pixels.
 
     The size is a multiple of 32, so the text encoder (one slot per 32x32 pixels) and the VAE (one
     token per 16x16 pixels) agree on the 2x2 tokens per slot without resizing it again.
     """
     assert path.is_file(), f"{path} not found"
     image = Image.open(path).convert("RGBA")
-    width, height, _ = calculate_dimensions(resolution * resolution, image.width / image.height)
+    width, height, _ = calculate_dimensions(area, image.width / image.height)
     return image.resize((width, height), Image.LANCZOS)
 
 
@@ -347,8 +356,10 @@ class MossImage:
 
     def __init__(self, args: argparse.Namespace) -> None:
         assert not args.image, "MOSS-Image is text-to-image only; it takes no --image"
-        assert args.resolution % 16 == 0, "--resolution must be a multiple of 16"
-        self.resolution = args.resolution
+        assert args.height % 16 == 0, "--height must be a multiple of 16"
+        assert args.width % 16 == 0, "--width must be a multiple of 16"
+        self.height = args.height
+        self.width = args.width
         self.num_inference_steps = args.num_inference_steps
         # The model code ships with the weights on the Hub, hence trust_remote_code.
         self.pipeline = DiffusionPipeline.from_pretrained(
@@ -390,12 +401,15 @@ class MossImage:
     @torch.no_grad()
     def sample(self, seed: int) -> Image.Image:
         """The pipeline's denoising loop with its default guidance, on the cached prompts."""
-        size = self.resolution // 16
+        height, width = self.height // 16, self.width // 16
         channels = self.transformer.config.latent_channels
         # The pipeline samples the noise and integrates in float32.
         generator = torch.Generator(device=DEVICE).manual_seed(seed)
         latents = torch.randn(
-            (1, channels, size, size), generator=generator, device=DEVICE, dtype=torch.float32,
+            (1, channels, height, width),
+            generator=generator,
+            device=DEVICE,
+            dtype=torch.float32,
         )
         self.scheduler.set_timesteps(self.num_inference_steps, device=DEVICE)
         for t in self.scheduler.timesteps:
@@ -791,7 +805,10 @@ class TierWindow:
         self.trainer = trainer
         self.board = board
         self.worker = worker
-        self.cell = args.thumbnail_size + PADDING
+        thumbnail_width, thumbnail_height = fit_size(args.width, args.height, args.thumbnail_size)
+        self.thumbnail_size = (thumbnail_width, thumbnail_height)
+        self.cell_width = thumbnail_width + PADDING
+        self.cell_height = thumbnail_height + PADDING
         self.thumbnails: dict[int, ImageTk.PhotoImage] = {}
         self.item_samples: dict[int, Sample] = {}
         # The (top, bottom) of every row and the images per line, as last drawn.
@@ -805,7 +822,7 @@ class TierWindow:
 
         self.root = tk.Tk()
         self.root.title(f"Tier Diffusion-DPO — {args.prompt}")
-        self.root.geometry(f"{ROW_LABEL_WIDTH + 8 * self.cell + 40}x900")
+        self.root.geometry(f"{ROW_LABEL_WIDTH + 8 * self.cell_width + 40}x900")
 
         top_frame = tk.Frame(self.root)
         top_frame.pack(fill=tk.X, padx=10, pady=(10, 4))
@@ -862,9 +879,8 @@ class TierWindow:
 
     def thumbnail(self, sample: Sample) -> ImageTk.PhotoImage:
         if sample.index not in self.thumbnails:
-            size = (self.args.thumbnail_size, self.args.thumbnail_size)
             self.thumbnails[sample.index] = ImageTk.PhotoImage(
-                sample.image.resize(size, Image.LANCZOS),
+                sample.image.resize(self.thumbnail_size, Image.LANCZOS),
             )
         return self.thumbnails[sample.index]
 
@@ -875,12 +891,12 @@ class TierWindow:
         self.canvas.delete("all")
         self.item_samples = {}
         self.bands = []
-        width = max(self.canvas.winfo_width(), ROW_LABEL_WIDTH + PADDING + self.cell)
-        self.per_line = max(1, (width - ROW_LABEL_WIDTH - PADDING) // self.cell)
+        width = max(self.canvas.winfo_width(), ROW_LABEL_WIDTH + PADDING + self.cell_width)
+        self.per_line = max(1, (width - ROW_LABEL_WIDTH - PADDING) // self.cell_width)
         top = 0
         for row, ((name, color), samples) in enumerate(zip(ROWS, rows, strict=True)):
             num_lines = max(1, math.ceil(len(samples) / self.per_line))
-            bottom = top + max(num_lines * self.cell + PADDING, ROW_MIN_HEIGHT)
+            bottom = top + max(num_lines * self.cell_height + PADDING, ROW_MIN_HEIGHT)
             self.canvas.create_rectangle(
                 0, top, ROW_LABEL_WIDTH, bottom, fill=color, outline="#202020",
             )
@@ -903,8 +919,8 @@ class TierWindow:
             for position, sample in enumerate(samples):
                 line, column = divmod(position, self.per_line)
                 item = self.canvas.create_image(
-                    ROW_LABEL_WIDTH + PADDING + column * self.cell,
-                    top + PADDING + line * self.cell,
+                    ROW_LABEL_WIDTH + PADDING + column * self.cell_width,
+                    top + PADDING + line * self.cell_height,
                     image=self.thumbnail(sample),
                     anchor=tk.NW,
                     tags=("sample",),
@@ -951,9 +967,9 @@ class TierWindow:
                 row = index
                 break
         top, _ = self.bands[row]
-        line = max(0, int((y - top - PADDING) // self.cell))
+        line = max(0, int((y - top - PADDING) // self.cell_height))
         # The left half of an image drops in front of it, the right half behind it.
-        column = int((x - ROW_LABEL_WIDTH - PADDING) / self.cell + 0.5)
+        column = int((x - ROW_LABEL_WIDTH - PADDING) / self.cell_width + 0.5)
         column = min(max(column, 0), self.per_line)
         return row, line * self.per_line + column
 
@@ -964,7 +980,7 @@ class TierWindow:
             self.preview_window = tk.Toplevel(self.root)
             self.preview_label = tk.Label(self.preview_window)
             self.preview_label.pack()
-        size = (self.args.display_size, self.args.display_size)
+        size = fit_size(self.args.width, self.args.height, self.args.display_size)
         self.preview_photo = ImageTk.PhotoImage(sample.image.resize(size, Image.LANCZOS))
         self.preview_label.config(image=self.preview_photo)
         self.preview_window.title(f"#{sample.index} (seed {sample.seed})")
@@ -986,6 +1002,12 @@ class TierWindow:
 
     def run(self) -> None:
         self.root.mainloop()
+
+
+def fit_size(width: int, height: int, longest: int) -> tuple[int, int]:
+    """`width` x `height` scaled so that its longer side is `longest` pixels."""
+    scale = longest / max(width, height)
+    return round(width * scale), round(height * scale)
 
 
 def main() -> None:
