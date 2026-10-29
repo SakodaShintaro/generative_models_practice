@@ -117,8 +117,8 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--height", type=int, default=896)
-    parser.add_argument("--width", type=int, default=512)
+    parser.add_argument("--height", type=int, default=672)
+    parser.add_argument("--width", type=int, default=384)
     # The longer side of the thumbnails and of the right-click preview; both keep the aspect ratio.
     parser.add_argument("--thumbnail_size", type=int, default=128)
     parser.add_argument("--display_size", type=int, default=512)
