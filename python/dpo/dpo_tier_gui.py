@@ -117,11 +117,11 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--height", type=int, default=672)
-    parser.add_argument("--width", type=int, default=384)
-    # The longer side of the thumbnails and of the right-click preview; both keep the aspect ratio.
-    parser.add_argument("--thumbnail_size", type=int, default=128)
-    parser.add_argument("--display_size", type=int, default=512)
+    parser.add_argument("--height", type=int, default=16 * 42)
+    parser.add_argument("--width", type=int, default=16 * 24)
+    # The thumbnails and the right-click preview are the generated images scaled by these factors.
+    parser.add_argument("--thumbnail_scale", type=float, default=0.25)
+    parser.add_argument("--display_scale", type=float, default=1.0)
     parser.add_argument("--max_unranked", type=int, default=50)
     # MOSS-Image recommends at least 50.
     parser.add_argument("--num_inference_steps", type=int, default=50)
@@ -817,7 +817,9 @@ class TierWindow:
         self.trainer = trainer
         self.board = board
         self.worker = worker
-        thumbnail_width, thumbnail_height = fit_size(args.width, args.height, args.thumbnail_size)
+        thumbnail_width, thumbnail_height = scaled_size(
+            args.width, args.height, args.thumbnail_scale,
+        )
         self.thumbnail_size = (thumbnail_width, thumbnail_height)
         self.cell_width = thumbnail_width + PADDING
         self.cell_height = thumbnail_height + PADDING
@@ -992,7 +994,7 @@ class TierWindow:
             self.preview_window = tk.Toplevel(self.root)
             self.preview_label = tk.Label(self.preview_window)
             self.preview_label.pack()
-        size = fit_size(self.args.width, self.args.height, self.args.display_size)
+        size = scaled_size(self.args.width, self.args.height, self.args.display_scale)
         self.preview_photo = ImageTk.PhotoImage(sample.image.resize(size, Image.LANCZOS))
         self.preview_label.config(image=self.preview_photo)
         self.preview_window.title(f"#{sample.index} (seed {sample.seed})")
@@ -1016,10 +1018,10 @@ class TierWindow:
         self.root.mainloop()
 
 
-def fit_size(width: int, height: int, longest: int) -> tuple[int, int]:
-    """`width` x `height` scaled so that its longer side is `longest` pixels."""
-    scale = longest / max(width, height)
-    return round(width * scale), round(height * scale)
+def scaled_size(width: int, height: int, scale: float) -> tuple[int, int]:
+    """`width` x `height` scaled by `scale`, at least one pixel each way."""
+    assert scale > 0, f"scale must be positive, got {scale}"
+    return max(1, round(width * scale)), max(1, round(height * scale))
 
 
 def main() -> None:
