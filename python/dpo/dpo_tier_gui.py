@@ -498,9 +498,11 @@ class TierDpo:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        # Everything this session saves (LoRA weights, images) goes into one directory per launch.
-        self.session_dir = args.results_dir / timestamp()
-        self.session_dir.mkdir(parents=True)
+        # Everything this session saves (LoRA weights, images) goes into one directory, made on the
+        # first save so that a launch that saves nothing leaves nothing behind. The GUI thread
+        # saves images and the GPU thread saves the LoRA weights, hence the lock.
+        self.session_dir: Path | None = None
+        self.session_dir_lock = threading.Lock()
         self.model = MODELS[args.pretrained_model](args)
         self.transformer = self.model.transformer
 
@@ -579,9 +581,18 @@ class TierDpo:
         assert not result.unexpected_keys, f"unexpected keys in {path}: {result.unexpected_keys}"
         print(f"resumed LoRA weights from {path}")
 
+    def save_dir(self) -> Path:
+        """This session's directory, made on the first call and reused by every later one."""
+        with self.session_dir_lock:
+            if self.session_dir is None:
+                self.session_dir = self.args.results_dir / timestamp()
+                self.session_dir.mkdir(parents=True)
+                print(f"saving this session to {self.session_dir}")
+            return self.session_dir
+
     def save_lora(self) -> Path:
         # The key layout of diffusers' save_lora_weights, which MOSS-Image's pipeline lacks.
-        path = self.session_dir / f"{timestamp()}.safetensors"
+        path = self.save_dir() / f"{timestamp()}.safetensors"
         state_dict = get_peft_model_state_dict(self.transformer)
         save_file({f"transformer.{key}": value for key, value in state_dict.items()}, str(path))
         return path
@@ -590,9 +601,10 @@ class TierDpo:
         """Save one tier's images at their generated resolution, numbered from the left."""
         # One timestamp for the whole tier, so its images sort together.
         prefix = timestamp()
+        save_dir = self.save_dir()
         paths = []
         for position, sample in enumerate(samples):
-            path = self.session_dir / f"{prefix}_{name}_{position:03d}.png"
+            path = save_dir / f"{prefix}_{name}_{position:03d}.png"
             sample.image.save(path)
             paths.append(path)
         return paths
@@ -992,7 +1004,7 @@ class TierWindow:
             self.status.config(text=f"{name} has no images to save")
             return
         paths = self.trainer.save_tier(name, rows[row])
-        print(f"saved {len(paths)} images of {name} to {self.trainer.session_dir}")
+        print(f"saved {len(paths)} images of {name} to {paths[0].parent}")
         self.status.config(text=f"saved {len(paths)} images of {name} as {paths[0].name}, ...")
 
     def on_save(self) -> None:
