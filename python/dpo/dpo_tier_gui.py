@@ -100,7 +100,6 @@ TIERS = [
     ("S", "#ff7f7f"),
     ("A", "#ffbf7f"),
     ("B", "#ffdf7f"),
-    ("C", "#ffff7f"),
 ]
 # Two more rows below the tiers that never enter the loss: new samples land in the first, and
 # the second takes images you want out of the way.
@@ -117,10 +116,10 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--height", type=int, default=32 * 21)
-    parser.add_argument("--width", type=int, default=32 * 12)
+    parser.add_argument("--height", type=int, default=32 * 30)
+    parser.add_argument("--width", type=int, default=32 * 18)
     # The thumbnails and the right-click preview are the generated images scaled by these factors.
-    parser.add_argument("--thumbnail_scale", type=float, default=0.25)
+    parser.add_argument("--thumbnail_scale", type=float, default=0.2)
     parser.add_argument("--display_scale", type=float, default=1.0)
     parser.add_argument("--max_unranked", type=int, default=50)
     # MOSS-Image recommends at least 50.
