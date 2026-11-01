@@ -29,13 +29,14 @@ and the target is the velocity `v = eps - x_0`.
 
 `--pretrained_model` picks the model:
 
-- Qwen/Qwen-Image-2.1 is sampled without classifier-free guidance. Optional `--image` reference
-  images condition every sample, as in `qwen_generate.py`, e.g. to learn preferences about one
-  person's poses. They are encoded once at startup, both by the Qwen3-VL text encoder (next to the
-  prompt) and by the VAE, whose latent tokens are placed before the target image in every forward
-  pass, for sampling and for the DPO steps alike. They are never noised and never enter the loss.
-  The pipeline's `__call__` cannot take cached prompt embeddings together with condition images,
-  so sampling runs its own denoising loop.
+- Qwen/Qwen-Image-2.1 is sampled without classifier-free guidance. With `--image_dir`, every
+  sample is conditioned on one reference image picked from that directory uniformly at random, as
+  in `qwen_generate.py`, e.g. to learn preferences about one person's poses. All of them are
+  encoded once at startup, both by the Qwen3-VL text encoder (next to the prompt) and by the VAE,
+  whose latent tokens are placed before the target image in every forward pass. Each image of a
+  DPO pair is conditioned on the reference it was sampled with, so the two may differ; references
+  are never noised and never enter the loss. The pipeline's `__call__` cannot take cached prompt
+  embeddings together with condition images, so sampling runs its own denoising loop.
 - OpenMOSS-Team/MOSS-Image-SFT and -Base (<https://github.com/OpenMOSS/MOSS-Image>) are
   text-to-image only. They are sampled with the recommended guidance: CFG 3 against an empty
   negative prompt whose branch skips block 22, i.e. two forward passes per step. The DPO loss is on
@@ -90,7 +91,7 @@ DEVICE = torch.device("cuda:0")
 DTYPE = torch.bfloat16
 NORMALIZE = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
 
-QWEN_MAX_REFERENCE_IMAGES = 10
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 # MOSS-Image's recommended sampling (README "Sampling settings"; the pipeline's defaults).
 MOSS_GUIDANCE_SCALE = 3.0
@@ -117,7 +118,7 @@ def parse_args() -> argparse.Namespace:
         "--pretrained_model", type=str, default="Qwen/Qwen-Image-2.1", choices=list(MODELS),
     )
     # Qwen-Image-2.1 only.
-    parser.add_argument("--image", type=Path, nargs="*", default=[])
+    parser.add_argument("--image_dir", type=Path, default=None)
     parser.add_argument("--height", type=int, default=32 * 30)
     parser.add_argument("--width", type=int, default=32 * 18)
     # The thumbnails and the right-click preview are the generated images scaled by these factors.
@@ -141,8 +142,28 @@ def parse_args() -> argparse.Namespace:
 #################################################################################
 
 
+@dataclass
+class QwenCondition:
+    """One reference image (or none) with the prompt, encoded once and kept on the CPU."""
+
+    name: str
+    prompt_embeds: torch.Tensor
+    image_pad_mask: torch.Tensor
+    reference_latents: torch.Tensor
+    reference_shapes: list[tuple[int, int, int]]
+
+    def to(self, device: torch.device) -> "QwenCondition":
+        return QwenCondition(
+            self.name,
+            self.prompt_embeds.to(device),
+            self.image_pad_mask.to(device),
+            self.reference_latents.to(device),
+            self.reference_shapes,
+        )
+
+
 class QwenImage:
-    """Qwen-Image-2.1 with the prompt and the reference images encoded once."""
+    """Qwen-Image-2.1 with the prompt encoded once per reference image of `--image_dir`."""
 
     # The transformer is single-stream, so these are all of its attention input projections.
     lora_target_modules: ClassVar[list[str]] = ["to_q", "to_k", "to_v"]
@@ -152,28 +173,28 @@ class QwenImage:
         # vision-language slots.
         assert args.height % 32 == 0, "--height must be a multiple of 32"
         assert args.width % 32 == 0, "--width must be a multiple of 32"
-        assert len(args.image) <= QWEN_MAX_REFERENCE_IMAGES, (
-            f"Qwen-Image-2.1 takes at most {QWEN_MAX_REFERENCE_IMAGES} reference images"
-        )
         self.height = args.height
         self.width = args.width
         self.num_inference_steps = args.num_inference_steps
-        references = [resize_reference(path, args.height * args.width) for path in args.image]
+        # One condition per reference image, each a list of the reference images it shows; without
+        # --image_dir the one condition is the prompt alone.
+        if args.image_dir is None:
+            names = ["(no reference)"]
+            reference_lists = [[]]
+        else:
+            paths = list_images(args.image_dir)
+            print(f"{len(paths)} reference images in {args.image_dir}")
+            names = [path.name for path in paths]
+            reference_lists = [
+                [resize_reference(path, args.height * args.width)] for path in paths
+            ]
         # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
         # GPU together. Load on the CPU, run only the text encoder on the GPU for the one prompt
-        # (and its reference images, which stay fixed for the session), drop it, and move the
-        # transformer and the VAE over afterwards.
+        # next to every reference image, drop it, and move the transformer and the VAE over
+        # afterwards.
         self.pipeline = QwenImage21Pipeline.from_pretrained(args.pretrained_model, dtype=DTYPE)
         self.pipeline.text_encoder.to(DEVICE)
-        with torch.no_grad():
-            # encode_prompt takes None, not an empty list, for text-to-image.
-            self.prompt_embeds, prompt_embeds_mask, self.image_pad_mask = (
-                self.pipeline.encode_prompt(
-                    prompt=args.prompt, image=references or None, device=DEVICE,
-                )
-            )
-        # A single prompt has no padding, for which encode_prompt returns no mask at all.
-        assert prompt_embeds_mask is None
+        encoded = [self.encode_prompt(args.prompt, references) for references in reference_lists]
         self.pipeline.text_encoder = None
         gc.collect()
         torch.cuda.empty_cache()
@@ -186,14 +207,44 @@ class QwenImage:
         # sample() caches the keys and values of the prompt and the reference images, which is only
         # valid because they are modulated with t = 0 at every step.
         assert self.transformer.config.causal_condition
-        self.reference_latents, self.reference_shapes = self.encode_references(references)
+        self.conditions = []
+        for name, (prompt_embeds, image_pad_mask), reference_list in zip(
+            names, encoded, reference_lists, strict=True,
+        ):
+            reference_latents, reference_shapes = self.encode_references(reference_list)
+            self.conditions.append(
+                QwenCondition(
+                    name,
+                    prompt_embeds.cpu(),
+                    image_pad_mask.cpu(),
+                    reference_latents.cpu(),
+                    reference_shapes,
+                ),
+            )
+
+    @property
+    def condition_names(self) -> list[str]:
+        return [condition.name for condition in self.conditions]
+
+    @torch.no_grad()
+    def encode_prompt(
+        self, prompt: str, references: list[Image.Image],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # encode_prompt takes None, not an empty list, for text-to-image.
+        prompt_embeds, prompt_embeds_mask, image_pad_mask = self.pipeline.encode_prompt(
+            prompt=prompt, image=references or None, device=DEVICE,
+        )
+        # A single prompt has no padding, for which encode_prompt returns no mask at all.
+        assert prompt_embeds_mask is None
+        return prompt_embeds, image_pad_mask
 
     def enable_gradient_checkpointing(self) -> None:
         self.transformer.enable_gradient_checkpointing()
 
     @torch.no_grad()
-    def sample(self, seed: int) -> Image.Image:
-        """The pipeline's denoising loop without guidance, on the cached prompt and references."""
+    def sample(self, seed: int, condition_index: int) -> Image.Image:
+        """The pipeline's denoising loop without guidance, on one cached prompt and reference."""
+        condition = self.conditions[condition_index].to(DEVICE)
         height, width = self.latent_size()
         channels = self.transformer.config.in_channels
         generator = torch.Generator(device=DEVICE).manual_seed(seed)
@@ -211,12 +262,13 @@ class QwenImage:
         )
         self.scheduler.set_begin_index(0)
 
-        conditioning = self.conditioning(1, height, width)
-        # The first step fills the cache with the prompt and the references; later steps only
+        conditioning = self.conditioning(condition, 1, height, width)
+        # The first step fills the cache with the prompt and the reference; later steps only
         # recompute the target image's tokens.
         kv_cache = QwenImage21KVCache(len(self.transformer.transformer_blocks))
         for index, t in enumerate(timesteps):
             velocity = self.predict(
+                condition,
                 latents,
                 # Cast before scaling, as the pipeline does, so the timesteps round identically.
                 t.expand(1).to(DTYPE) / 1000,
@@ -270,16 +322,19 @@ class QwenImage:
         # The VAE takes a length-1 frame axis.
         return self.pipeline._encode_vae_image(image=pixel_values.unsqueeze(2), generator=None)  # noqa: SLF001
 
-    def conditioning(self, batch_size: int, height: int, width: int) -> dict:
+    def conditioning(
+        self, condition: QwenCondition, batch_size: int, height: int, width: int,
+    ) -> dict:
         """Transformer inputs shared by `batch_size` targets of `height` x `width` latent tokens."""
         # As in the pipeline, the target image takes one vision-language slot per 2x2 group of
-        # latent tokens, appended after the prompt (which holds the references' slots).
+        # latent tokens, appended after the prompt (which holds the reference's slots).
+        image_pad_mask = condition.image_pad_mask
         img_mask = torch.cat(
-            [self.image_pad_mask, self.image_pad_mask.new_ones(1, height * width // 4)], dim=1,
+            [image_pad_mask, image_pad_mask.new_ones(1, height * width // 4)], dim=1,
         )
         return {
-            "encoder_hidden_states": self.prompt_embeds.repeat(batch_size, 1, 1),
-            "img_shapes": [[*self.reference_shapes, (1, height, width)]] * batch_size,
+            "encoder_hidden_states": condition.prompt_embeds.repeat(batch_size, 1, 1),
+            "img_shapes": [[*condition.reference_shapes, (1, height, width)]] * batch_size,
             "img_mask": img_mask.repeat(batch_size, 1),
         }
 
@@ -297,15 +352,19 @@ class QwenImage:
         """Shift a uniform-ish time in (0, 1) the same way inference shifts it."""
         return self.scheduler.time_shift(self.shift_mu(latents.shape[1]), 1.0, u)
 
-    def velocity(self, noisy_latents: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
-        """The trained transformer's prediction for a batch of noised target latents."""
+    def velocity(
+        self, noisy_latents: torch.Tensor, sigma: torch.Tensor, condition_index: int,
+    ) -> torch.Tensor:
+        """The trained transformer's prediction for a batch of noised targets of one condition."""
+        condition = self.conditions[condition_index].to(DEVICE)
         height, width = self.latent_size()
-        conditioning = self.conditioning(noisy_latents.shape[0], height, width)
+        conditioning = self.conditioning(condition, noisy_latents.shape[0], height, width)
         timestep = sigma.expand(noisy_latents.shape[0])
-        return self.predict(noisy_latents, timestep, conditioning, None, None)
+        return self.predict(condition, noisy_latents, timestep, conditioning, None, None)
 
     def predict(
         self,
+        condition: QwenCondition,
         noisy_latents: torch.Tensor,
         timestep: torch.Tensor,
         conditioning: dict,
@@ -313,7 +372,7 @@ class QwenImage:
         kv_cache_mode: str | None,
     ) -> torch.Tensor:
         # The clean reference latents go before the target image.
-        references = self.reference_latents.repeat(noisy_latents.shape[0], 1, 1)
+        references = condition.reference_latents.repeat(noisy_latents.shape[0], 1, 1)
         output = self.transformer(
             hidden_states=torch.cat([references, noisy_latents], dim=1),
             timestep=timestep,
@@ -324,6 +383,14 @@ class QwenImage:
         )[0]
         # The output spans the whole joint text/image sequence; the target image is its tail.
         return output[:, -noisy_latents.shape[1]:]
+
+
+def list_images(image_dir: Path) -> list[Path]:
+    """The image files directly in `image_dir`, sorted by name."""
+    assert image_dir.is_dir(), f"{image_dir} is not a directory"
+    paths = sorted(path for path in image_dir.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES)
+    assert paths, f"no images ({', '.join(sorted(IMAGE_SUFFIXES))}) in {image_dir}"
+    return paths
 
 
 def resize_reference(path: Path, area: int) -> Image.Image:
@@ -356,7 +423,7 @@ class MossImage:
     lora_target_modules = r"layers\.\d+\.proj\.[qkv]"
 
     def __init__(self, args: argparse.Namespace) -> None:
-        assert not args.image, "MOSS-Image is text-to-image only; it takes no --image"
+        assert args.image_dir is None, "MOSS-Image is text-to-image only; it takes no --image_dir"
         assert args.height % 16 == 0, "--height must be a multiple of 16"
         assert args.width % 16 == 0, "--width must be a multiple of 16"
         self.height = args.height
@@ -390,6 +457,11 @@ class MossImage:
         self.vae = self.pipeline.vae
         self.scheduler = self.pipeline.scheduler
 
+    @property
+    def condition_names(self) -> list[str]:
+        # Text-to-image only: the one condition is the prompt.
+        return ["(no reference)"]
+
     def enable_gradient_checkpointing(self) -> None:
         # The custom transformer does not implement diffusers' gradient checkpointing, so
         # checkpoint each joint block by hand. Without it the activations of the 42 blocks for a
@@ -400,8 +472,9 @@ class MossImage:
             )
 
     @torch.no_grad()
-    def sample(self, seed: int) -> Image.Image:
+    def sample(self, seed: int, condition_index: int) -> Image.Image:
         """The pipeline's denoising loop with its default guidance, on the cached prompts."""
+        assert condition_index == 0
         height, width = self.height // 16, self.width // 16
         channels = self.transformer.config.latent_channels
         # The pipeline samples the noise and integrates in float32.
@@ -454,8 +527,11 @@ class MossImage:
         shift = self.scheduler.config.shift
         return shift * u / (1 + (shift - 1) * u)
 
-    def velocity(self, noisy_latents: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+    def velocity(
+        self, noisy_latents: torch.Tensor, sigma: torch.Tensor, condition_index: int,
+    ) -> torch.Tensor:
         """The trained transformer's conditional prediction for a batch of noised latents."""
+        assert condition_index == 0
         batch_size = noisy_latents.shape[0]
         return self.transformer(
             hidden_states=noisy_latents,
@@ -487,10 +563,12 @@ MODELS = {
 
 @dataclass
 class Sample:
-    """One generated image."""
+    """One generated image and the condition (reference image) it was generated with."""
 
     index: int
     seed: int
+    condition_index: int
+    condition_name: str
     image: Image.Image
 
 
@@ -528,12 +606,16 @@ class TierDpo:
         """One sample of the current model."""
         index = self.num_samples
         seed = self.seed(index)
+        # A new reference image, uniformly at random, for every sample.
+        condition_names = self.model.condition_names
+        condition_index = int(torch.randint(0, len(condition_names), (1,)))
         start_time = time.time()
-        image = self.model.sample(seed)
+        image = self.model.sample(seed, condition_index)
         elapsed = time.time() - start_time
-        print(f"sample {index}: seed={seed}, {elapsed:.2f} seconds")
+        condition_name = condition_names[condition_index]
+        print(f"sample {index}: seed={seed}, reference={condition_name}, {elapsed:.2f} seconds")
         self.num_samples += 1
-        return Sample(index, seed, image)
+        return Sample(index, seed, condition_index, condition_name, image)
 
     def sample_sigma(self, latents: torch.Tensor) -> torch.Tensor:
         """One sigma in (0, 1), logit-normal and shifted the same way inference shifts it."""
@@ -542,7 +624,26 @@ class TierDpo:
         )
         return self.model.shift_sigma(u, latents)
 
-    def dpo_step(self, latents: torch.Tensor) -> tuple[float, float]:
+    def velocity(
+        self, noisy_latents: torch.Tensor, sigma: torch.Tensor, condition_indices: list[int],
+    ) -> torch.Tensor:
+        """The predictions for a winner/loser batch, each on the condition it was sampled with.
+
+        Different reference images give sequences of different lengths, so a pair that does not
+        share one runs one forward pass per image.
+        """
+        if len(set(condition_indices)) == 1:
+            return self.model.velocity(noisy_latents, sigma, condition_indices[0])
+        return torch.cat(
+            [
+                self.model.velocity(noisy_latents[index : index + 1], sigma, condition_index)
+                for index, condition_index in enumerate(condition_indices)
+            ],
+        )
+
+    def dpo_step(
+        self, latents: torch.Tensor, condition_indices: list[int],
+    ) -> tuple[float, float]:
         # The winner and its loser must see identical noise and sigma.
         noise = torch.randn_like(latents[:1]).expand_as(latents)
         sigma = self.sample_sigma(latents).to(latents.dtype)
@@ -550,10 +651,10 @@ class TierDpo:
         # Rectified flow: the model predicts the velocity from the noise towards the data.
         target = noise - latents
 
-        model_pred = self.model.velocity(noisy_latents, sigma)
+        model_pred = self.velocity(noisy_latents, sigma, condition_indices)
         model_diff = win_minus_lose_error(model_pred, target)
         with torch.no_grad(), reference_model(self.transformer):
-            ref_pred = self.model.velocity(noisy_latents, sigma)
+            ref_pred = self.velocity(noisy_latents, sigma, condition_indices)
             ref_diff = win_minus_lose_error(ref_pred, target)
 
         logits = -self.args.beta_dpo * (model_diff - ref_diff)
@@ -569,7 +670,7 @@ class TierDpo:
     def learn_from(self, winner: Sample, loser: Sample) -> tuple[float, float]:
         """Run one DPO step on one pair of images from different tiers."""
         latents = self.model.encode_images([winner.image, loser.image])
-        return self.dpo_step(latents)
+        return self.dpo_step(latents, [winner.condition_index, loser.condition_index])
 
     def load_lora(self, path: Path) -> None:
         """Restore the adapter of a previous session into the freshly added one."""
@@ -1013,7 +1114,9 @@ class TierWindow:
         size = scaled_size(self.args.width, self.args.height, self.args.display_scale)
         self.preview_photo = ImageTk.PhotoImage(sample.image.resize(size, Image.LANCZOS))
         self.preview_label.config(image=self.preview_photo)
-        self.preview_window.title(f"#{sample.index} (seed {sample.seed})")
+        self.preview_window.title(
+            f"#{sample.index} (seed {sample.seed}, reference {sample.condition_name})",
+        )
 
     def on_save_tier(self, row: int) -> None:
         name, _ = TIERS[row]
