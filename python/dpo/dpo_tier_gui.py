@@ -51,6 +51,8 @@ import gc
 import itertools
 import math
 import queue
+import shlex
+import sys
 import threading
 import time
 import tkinter as tk
@@ -586,8 +588,23 @@ class TierDpo:
             if self.session_dir is None:
                 self.session_dir = self.args.results_dir / timestamp()
                 self.session_dir.mkdir(parents=True)
+                self.save_command()
                 print(f"saving this session to {self.session_dir}")
             return self.session_dir
+
+    def save_command(self) -> None:
+        """The command line this session was launched with, and every argument it resolved to.
+
+        The resolved arguments include the defaults, which may have changed since.
+        """
+        lines = [
+            f"# cwd: {Path.cwd()}",
+            shlex.join(sys.orig_argv),
+            "",
+            "# resolved arguments",
+            *(f"{name}: {value}" for name, value in vars(self.args).items()),
+        ]
+        (self.session_dir / "command.txt").write_text("\n".join(lines) + "\n")
 
     def save_lora(self) -> Path:
         # The key layout of diffusers' save_lora_weights, which MOSS-Image's pipeline lacks.
