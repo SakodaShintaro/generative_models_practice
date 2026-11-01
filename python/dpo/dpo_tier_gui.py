@@ -117,8 +117,8 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image", type=Path, nargs="*", default=[])
-    parser.add_argument("--height", type=int, default=16 * 42)
-    parser.add_argument("--width", type=int, default=16 * 24)
+    parser.add_argument("--height", type=int, default=32 * 21)
+    parser.add_argument("--width", type=int, default=32 * 12)
     # The thumbnails and the right-click preview are the generated images scaled by these factors.
     parser.add_argument("--thumbnail_scale", type=float, default=0.25)
     parser.add_argument("--display_scale", type=float, default=1.0)
