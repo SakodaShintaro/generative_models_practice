@@ -119,11 +119,19 @@ def parse_args() -> argparse.Namespace:
     )
     # Qwen-Image-2.1 only.
     parser.add_argument("--image_dir", type=Path, default=None)
+
+    # standard size
     parser.add_argument("--height", type=int, default=32 * 30)
     parser.add_argument("--width", type=int, default=32 * 18)
-    # The thumbnails and the right-click preview are the generated images scaled by these factors.
     parser.add_argument("--thumbnail_scale", type=float, default=0.2)
     parser.add_argument("--display_scale", type=float, default=1.0)
+
+    # large size
+    # parser.add_argument("--height", type=int, default=32 * 33)
+    # parser.add_argument("--width", type=int, default=32 * 25)
+    # parser.add_argument("--thumbnail_scale", type=float, default=0.1)
+    # parser.add_argument("--display_scale", type=float, default=0.9)
+
     parser.add_argument("--max_unranked", type=int, default=50)
     # MOSS-Image recommends at least 50.
     parser.add_argument("--num_inference_steps", type=int, default=50)
