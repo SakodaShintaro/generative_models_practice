@@ -135,6 +135,12 @@ def parse_args() -> argparse.Namespace:
     # parser.add_argument("--thumbnail_scale", type=float, default=0.1)
     # parser.add_argument("--display_scale", type=float, default=0.9)
 
+    # max size
+    # parser.add_argument("--height", type=int, default=32 * 56)
+    # parser.add_argument("--width", type=int, default=32 * 38)
+    # parser.add_argument("--thumbnail_scale", type=float, default=0.1)
+    # parser.add_argument("--display_scale", type=float, default=0.5)
+
     parser.add_argument("--max_unranked", type=int, default=50)
     # MOSS-Image recommends at least 50.
     parser.add_argument("--num_inference_steps", type=int, default=50)
