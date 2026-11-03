@@ -8,6 +8,9 @@ on the GPU repeats one step after another:
    uniformly at random and run one DPO step on it, the one in the higher tier being the winner.
 2. Sample one new image from the current model and put it in the "unranked" row.
 
+With `--no_train 1` the first step is skipped: the model only samples, and the tier list only
+sorts and saves images.
+
 You can drag any image to any row at any time, including re-ranking older ones; each step reads
 the tier list as it is then. Images in the "unranked" and "discarded" rows never enter the loss.
 Sampling pauses while `--max_unranked` images are waiting to be ranked, so the GPU does not run
@@ -140,6 +143,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora_rank", type=int, default=8)
     parser.add_argument("--base_seed", type=int, default=-1)
     parser.add_argument("--resume_lora", type=Path, default=None)
+    parser.add_argument("--no_train", type=int, default=0, choices=[0, 1])
     parser.add_argument("--logit_mean", type=float, default=0.0)
     parser.add_argument("--logit_std", type=float, default=1.0)
     return parser.parse_args()
@@ -851,11 +855,15 @@ class GpuWorker:
         self.trainer = trainer
         self.board = board
         self.max_unranked = max_unranked
+        self.train = trainer.args.no_train == 0
         # Status lines for the GUI, which polls them; tkinter must only be touched from its thread.
         self.outbox: queue.Queue[str] = queue.Queue()
         # Set by the GUI and served between steps, so saving never races a DPO step.
         self.save_requested = False
-        self.last_step = "no DPO step yet"
+        if self.train:
+            self.last_step = "no DPO step yet"
+        else:
+            self.last_step = "training off (--no_train 1)"
 
     def request_save(self) -> None:
         with self.board.changed:
@@ -884,7 +892,7 @@ class GpuWorker:
             save_requested = self.save_requested
             self.save_requested = False
             # The tier list as it is now; later drags only affect later steps.
-            pair = self.board.random_pair()
+            pair = self.board.random_pair() if self.train else None
         if save_requested:
             self.save()
             return
@@ -966,9 +974,11 @@ class TierWindow:
         top_frame = tk.Frame(self.root)
         top_frame.pack(fill=tk.X, padx=10, pady=(10, 4))
         tk.Label(top_frame, text=args.prompt, font=("", 12)).pack(side=tk.LEFT)
-        tk.Button(top_frame, text="LoRAを保存", width=14, command=self.on_save).pack(
-            side=tk.RIGHT,
-        )
+        # Without training the LoRA weights never change, so there is nothing new to save.
+        if args.no_train == 0:
+            tk.Button(top_frame, text="LoRAを保存", width=14, command=self.on_save).pack(
+                side=tk.RIGHT,
+            )
         self.status = tk.Label(self.root, text="sampling...", font=("", 10), anchor=tk.W)
         self.status.pack(fill=tk.X, padx=10)
 
