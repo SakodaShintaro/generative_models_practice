@@ -3,14 +3,15 @@
 The image is passed to the pipeline as its single condition image, with a fixed prompt asking for
 the same picture with restored detail. Qwen-Image-2.1 reads it twice: the Qwen3-VL text encoder
 sees its pixels next to the prompt, and the VAE turns it into latent tokens placed before the
-noise. The output keeps the image's aspect ratio at about `--output_resolution`^2 pixels and is
-saved next to the input with a suffix, e.g.
+noise. The output keeps the image's aspect ratio and is `--scale` times the input on each side
+(rounded to a multiple of 32), saved next to the input with a suffix, e.g.
 
-    uv run python dpo/qwen_generate.py --image photo.jpg --output_resolution 2048
-    # -> photo_qwen2048_seed<seed>.png
+    uv run python dpo/qwen_generate.py --image photo.jpg --scale 2
+    # -> photo_qwen2x_seed<seed>.png
 """
 
 import argparse
+import math
 from pathlib import Path
 
 import torch
@@ -33,10 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_inference_steps", type=int, default=40)
     # true_cfg_scale. Qwen-Image-2.1 is meant to be sampled without guidance (1.0).
     parser.add_argument("--guidance_scale", type=float, default=1.0)
-    # The model is native 2K, and 2048 is also the most two 24 GB GPUs hold: at 4096 the text
-    # encoder alone runs out of memory. The input image is resized to this size too, before both
-    # the text encoder and the VAE read it.
-    parser.add_argument("--output_resolution", type=int, default=1024)
+    parser.add_argument("--scale", type=float, default=1.0)
     # Cache the condition tokens' keys and values after the first step instead of recomputing
     # them every step. Faster, but at 2048 the cache alone (~10 GB) does not fit.
     parser.add_argument("--use_kv_cache", action="store_true")
@@ -53,6 +51,11 @@ def main() -> None:
     args = parse_args()
     assert args.image.is_file(), f"{args.image} not found"
     reference = Image.open(args.image)
+    width, height = reference.size
+    # The pipeline keeps the input's aspect ratio and makes the output area output_resolution^2,
+    # so a side of sqrt(width * height) * scale scales both sides by `scale`.
+    output_resolution = round(math.sqrt(width * height) * args.scale)
+    print(f"input {width}x{height}, output_resolution {output_resolution}")
 
     # The Qwen3-VL text encoder (~17 GB) and the transformer (~14 GB) do not fit on one 24 GB
     # GPU together, so put them on two GPUs: the text encoder on one, the transformer and the
@@ -75,12 +78,12 @@ def main() -> None:
             negative_prompt=negative_prompt,
             true_cfg_scale=args.guidance_scale,
             num_inference_steps=args.num_inference_steps,
-            output_resolution=args.output_resolution,
+            output_resolution=output_resolution,
             use_kv_cache=args.use_kv_cache,
             generator=torch.Generator(device="cpu").manual_seed(seed),
         ).images[0]
         path = args.image.with_name(
-            f"{args.image.stem}_qwen{args.output_resolution}_seed{seed}.png"
+            f"{args.image.stem}_qwen{args.scale:g}x_seed{seed}.png"
         )
         image.save(path)
         print(f"saved {path}")
