@@ -1,12 +1,12 @@
 """Super-resolution with Qwen-Image-2.1: re-render one image at a higher resolution.
 
-The image is passed to the pipeline as its single condition image, with a fixed prompt asking for
-the same picture with restored detail. Qwen-Image-2.1 reads it twice: the Qwen3-VL text encoder
-sees its pixels next to the prompt, and the VAE turns it into latent tokens placed before the
-noise. The output keeps the image's aspect ratio and is `--scale` times the input on each side
-(rounded to a multiple of 32), saved next to the input with a suffix, e.g.
+The image is passed to the pipeline as its single condition image, with `--prompt` saying what to
+render, e.g. the same picture with restored detail. Qwen-Image-2.1 reads the image twice: the
+Qwen3-VL text encoder sees its pixels next to the prompt, and the VAE turns it into latent tokens
+placed before the noise. The output keeps the image's aspect ratio and is `--scale` times the
+input on each side (rounded to a multiple of 32), saved next to the input with a suffix, e.g.
 
-    uv run python dpo/qwen_generate.py --image photo.jpg --scale 2
+    uv run python dpo/qwen_generate.py --image photo.jpg --scale 2 --prompt "prompt"
     # -> photo_qwen2x_seed<seed>.png
 """
 
@@ -18,25 +18,17 @@ import torch
 from diffusers import QwenImage21Pipeline
 from PIL import Image
 
-PROMPT = (
-    "Upscale image 1 to a sharp, high-resolution version of the same picture. Keep the content, "
-    "composition, colors, lighting, and every face and identity exactly the same. Only restore "
-    "fine detail and crisp textures, and remove blur, noise, and compression artifacts."
-)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--prompt", type=str, required=True)
     parser.add_argument("--pretrained_model", type=str, default="Qwen/Qwen-Image-2.1")
     parser.add_argument("--num_images", type=int, default=1)
     parser.add_argument("--base_seed", type=int, default=-1)
     parser.add_argument("--num_inference_steps", type=int, default=40)
-    # true_cfg_scale. Qwen-Image-2.1 is meant to be sampled without guidance (1.0).
     parser.add_argument("--guidance_scale", type=float, default=1.0)
     parser.add_argument("--scale", type=float, default=1.0)
-    # Cache the condition tokens' keys and values after the first step instead of recomputing
-    # them every step. Faster, but at 2048 the cache alone (~10 GB) does not fit.
     parser.add_argument("--use_kv_cache", action="store_true")
     return parser.parse_args()
 
@@ -73,7 +65,7 @@ def main() -> None:
 
     for seed in image_seeds(args.base_seed, args.num_images):
         image = pipeline(
-            prompt=PROMPT,
+            prompt=args.prompt,
             image=[reference],
             negative_prompt=negative_prompt,
             true_cfg_scale=args.guidance_scale,
