@@ -34,8 +34,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--image_dir", type=Path, default=None)
     # standard size
-    parser.add_argument("--height", type=int, default=32 * 29)
-    parser.add_argument("--width", type=int, default=32 * 16)
+    parser.add_argument("--height", type=int, default=32 * 30)
+    parser.add_argument("--width", type=int, default=32 * 18)
 
     # large size
     # parser.add_argument("--height", type=int, default=32 * 56)
