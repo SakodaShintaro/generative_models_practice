@@ -1,5 +1,6 @@
 import argparse
 import json
+import secrets
 import shutil
 import subprocess
 import time
@@ -21,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--scheduler", type=str, default="beta")
     parser.add_argument("--lora_strength", type=float, default=1.0)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--port", type=int, default=8189)
     parser.add_argument("--out_dir", type=Path, default=SCRIPT_DIR / "results")
     return parser.parse_args()
@@ -184,6 +185,10 @@ def main() -> None:
 
     assert args.image.is_file(), args.image
     assert args.scale > 0, args.scale
+    assert args.seed >= -1, args.seed
+
+    seed = secrets.randbelow(2**32) if args.seed == -1 else args.seed
+    print(f"seed={seed}")
 
     with Image.open(args.image) as img:
         image_width, image_height = img.size
@@ -194,7 +199,7 @@ def main() -> None:
     start_time = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
     tag = (
         f"{start_time}_{args.image.stem}_{width}x{height}_{args.seconds:g}s_"
-        f"{args.steps}step_{args.scheduler}_seed{args.seed}"
+        f"{args.steps}step_{args.scheduler}_seed{seed}"
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -229,7 +234,7 @@ def main() -> None:
             steps=args.steps,
             scheduler=args.scheduler,
             lora_strength=args.lora_strength,
-            seed=args.seed,
+            seed=seed,
             output_prefix=f"minimax_h3_i2v/{tag}",
         )
         res = http_json(f"{base_url}/prompt", {"prompt": workflow, "client_id": str(uuid.uuid4())})
