@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
@@ -153,7 +154,7 @@ def http_json(url: str, payload: dict | None) -> dict:
 def wait_server_ready(base_url: str, proc: subprocess.Popen, timeout_sec: float) -> None:
     start = time.time()
     while time.time() - start < timeout_sec:
-        assert proc.poll() is None, "ComfyUI exited during startup (see comfyui.log)"
+        assert proc.poll() is None, "ComfyUI exited during startup (see output above)"
         try:
             http_json(f"{base_url}/system_stats", None)
         except (urllib.error.URLError, ConnectionError):
@@ -167,7 +168,7 @@ def wait_server_ready(base_url: str, proc: subprocess.Popen, timeout_sec: float)
 def wait_prompt_done(base_url: str, prompt_id: str, proc: subprocess.Popen) -> dict:
     start = time.time()
     while True:
-        assert proc.poll() is None, "ComfyUI exited during generation (see comfyui.log)"
+        assert proc.poll() is None, "ComfyUI exited during generation (see output above)"
         history = http_json(f"{base_url}/history/{prompt_id}", None)
         if prompt_id in history:
             entry = history[prompt_id]
@@ -190,8 +191,9 @@ def main() -> None:
     height = round_to_multiple(image_height * args.scale, CANVAS_MULTIPLE)
     print(f"input={image_width}x{image_height} scale={args.scale} -> output={width}x{height}")
 
+    start_time = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
     tag = (
-        f"{args.image.stem}_{width}x{height}_{args.seconds:g}s_"
+        f"{start_time}_{args.image.stem}_{width}x{height}_{args.seconds:g}s_"
         f"{args.steps}step_{args.scheduler}_seed{args.seed}"
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -211,42 +213,37 @@ def main() -> None:
         "--disable-auto-launch",
         "--use-sage-attention",
     ]
-    log_path = args.out_dir / f"{tag}.comfyui.log"
     base_url = f"http://127.0.0.1:{args.port}"
-    with log_path.open("w") as log_file:
-        proc = subprocess.Popen(  # noqa: S603
-            cmd, cwd=COMFY_DIR, stdout=log_file, stderr=subprocess.STDOUT
+    # ComfyUI's stdout/stderr go straight to this terminal (no log file)
+    proc = subprocess.Popen(cmd, cwd=COMFY_DIR)  # noqa: S603
+    try:
+        wait_server_ready(base_url, proc, timeout_sec=300)
+        length = snap_length(args.seconds)
+        print(f"tag={tag} frames={length}")
+        workflow = build_workflow(
+            image_name=args.image.name,
+            prompt=args.prompt,
+            width=width,
+            height=height,
+            length=length,
+            steps=args.steps,
+            scheduler=args.scheduler,
+            lora_strength=args.lora_strength,
+            seed=args.seed,
+            output_prefix=f"minimax_h3_i2v/{tag}",
         )
-        try:
-            wait_server_ready(base_url, proc, timeout_sec=300)
-            length = snap_length(args.seconds)
-            print(f"tag={tag} frames={length}")
-            workflow = build_workflow(
-                image_name=args.image.name,
-                prompt=args.prompt,
-                width=width,
-                height=height,
-                length=length,
-                steps=args.steps,
-                scheduler=args.scheduler,
-                lora_strength=args.lora_strength,
-                seed=args.seed,
-                output_prefix=f"minimax_h3_i2v/{tag}",
-            )
-            res = http_json(
-                f"{base_url}/prompt", {"prompt": workflow, "client_id": str(uuid.uuid4())}
-            )
-            assert "prompt_id" in res, res
-            entry = wait_prompt_done(base_url, res["prompt_id"], proc)
-            for node_output in entry["outputs"].values():
-                for item in node_output["images"]:
-                    src = COMFY_DIR / "output" / item["subfolder"] / item["filename"]
-                    dst = args.out_dir / f"{tag}{src.suffix}"
-                    shutil.copy(src, dst)
-                    print(f"saved {dst}")
-        finally:
-            proc.terminate()
-            proc.wait()
+        res = http_json(f"{base_url}/prompt", {"prompt": workflow, "client_id": str(uuid.uuid4())})
+        assert "prompt_id" in res, res
+        entry = wait_prompt_done(base_url, res["prompt_id"], proc)
+        for node_output in entry["outputs"].values():
+            for item in node_output["images"]:
+                src = COMFY_DIR / "output" / item["subfolder"] / item["filename"]
+                dst = args.out_dir / f"{tag}{src.suffix}"
+                shutil.move(src, dst)
+                print(f"saved {dst}")
+    finally:
+        proc.terminate()
+        proc.wait()
 
 
 if __name__ == "__main__":
