@@ -1,25 +1,3 @@
-"""Interactive image-to-video with MiniMax H3 + Turbo LoRA in a Gradio web UI.
-
-ComfyUI is started once, in the background (headless, with SageAttention), and a browser page lets
-you set the prompt, the image and the sampling settings, then generate as many times as you like.
-ComfyUI keeps the models loaded between runs, so only the first run pays for loading them.
-
-- The image becomes the first frame. The output is `scale` times the image on each side (rounded
-  to a multiple of 32); the image is stretched to that size, so the rounding barely changes its
-  aspect ratio.
-- The image is also shown to the text encoder; refer to it as <Picture 1> in the prompt.
-
-The status line shows what ComfyUI is doing, with step progress such as "サンプリング 4/8".
-
-Nothing is saved on its own. The generated video (with its audio) plays in the page; save it with
-"保存…", which opens a native save dialog (zenity) in results/, suggesting
-`<time>_<stem>_<width>x<height>_<seconds>s_<steps>step_<scheduler>_seed<seed>.mp4`.
-
-    cd minimax_h3_i2v && CUDA_VISIBLE_DEVICES=0 uv run python run_i2v.py
-
-The UI runs in the project's environment; ComfyUI runs in its own `minimax_h3_i2v/.venv`.
-"""
-
 import argparse
 import json
 import secrets
